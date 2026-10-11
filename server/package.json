@@ -1,0 +1,35 @@
+{
+  "name": "goride-server",
+  "version": "1.0.0",
+  "description": "Backend REST API for GoRide — Smart Urban Ride Booking and Management System",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch-path=src src/server.js",
+    "test:p1": "node test_phase3_p1.mjs",
+    "test:p2": "node test_phase3_p2.mjs",
+    "test:p3": "node test_phase3_p3.mjs",
+    "test:p4": "node test_phase4.mjs",
+    "test:categories": "node test_vehicle_categories.mjs",
+    "test:all": "node test_phase3_p1.mjs && node test_phase3_p2.mjs && node test_phase3_p3.mjs && node test_phase4.mjs && node test_vehicle_categories.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "mysql2": "^3.12.0"
+  },
+  "keywords": [
+    "goride",
+    "express",
+    "mysql",
+    "ride-booking",
+    "rest-api"
+  ],
+  "author": "GoRide Team",
+  "license": "ISC"
+}

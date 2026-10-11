@@ -1,0 +1,17 @@
+--- PAGE 1 ---
+Ride Booking System – Collaboration Diagram
+User
+Booking
+Driver
+Ride
+Payment
+1. bookRide()
+2. findDriver() 3. isAvailable()
+4. createRide()
+5. startRide()
+6. makePayment()
+7. paymentSuccess()
+Message flow
+1 → 2 → 3 → 4 → 5 → 6 → 7
+Solid arrows show communication between objects.
+
