@@ -2,13 +2,14 @@
 
 > **Tagline:** Move Smarter. Ride Better.  
 > **Academic Identity:** Software Engineering Academic Project  
-> **Current Milestone:** Phase 1 — Project Foundation & UI Design System  
+> **Current Milestone:** Phase 1 — Project Foundation & UI Design System
 
 ---
 
 ## 1. System Overview
 
 GoRide is an urban transit booking and fleet management system built with a clean, decoupled architecture:
+
 - **Frontend Client:** React 18 SPA powered by Vite, Tailwind CSS, and React Router.
 - **Backend API:** Node.js Express REST API structured with ES modules.
 - **Data Architecture:** Designed for relational MySQL using `mysql2`. Domain tables will be derived from the approved UML class diagram in Phase 2.
@@ -20,7 +21,7 @@ GoRide is an urban transit booking and fleet management system built with a clea
   4. **Thane district** (Central urban zone)
   5. **Kalyan-Dombivli** (Eastern municipal zone)
   6. **Navi Mumbai** (Trans-Harbour & industrial zone)
-  *(No countrywide or unauthorized operations are claimed).*
+     _(No countrywide or unauthorized operations are claimed)._
 
 ---
 
@@ -29,6 +30,7 @@ GoRide is an urban transit booking and fleet management system built with a clea
 Phase 1 establishes the clean project foundation, visual design system, routing, and system health telemetry.
 
 ### Implemented in Phase 1:
+
 - [x] Clean directory separation (`client`, `server`, `docs`).
 - [x] Complete visual design system adhering to the strict color palette (Dark & Light themes).
 - [x] Persistent theme toggling (`dark` / `light`) via `localStorage`.
@@ -48,6 +50,7 @@ Phase 1 establishes the clean project foundation, visual design system, routing,
 - [x] Academic documentation repository tracker in `docs/README.md`.
 
 ### Intentionally Deferred to Phase 2:
+
 - User authentication and session token verification
 - Ride booking creation, status lifecycle, and cancellations
 - Driver dispatching algorithms and real-time matching
@@ -61,19 +64,19 @@ Phase 1 establishes the clean project foundation, visual design system, routing,
 
 The application features solid surfaces, restrained borders, and purposeful accentuation:
 
-| Token | Dark Theme | Light Theme | Usage |
-| :--- | :--- | :--- | :--- |
-| **Background** | `#0B0A0F` | `#F7F5FC` | Canvas background |
-| **Card Surfaces** | `#17141E` | `#FFFFFF` | Content cards and panels |
-| **Input Surfaces** | `#100E16` | `#FFFFFF` | Form inputs and controls |
-| **Secondary Surfaces** | `#17141E` | `#EEEAF7` | Sub-panels and pills |
-| **Borders** | `#30283A` | `#E4DFEC` | Card, table, and divider borders |
-| **Primary Accent** | `#8B5CF6` | `#7C3AED` | Primary actions and active states |
-| **Hover Accent** | `#7C3AED` | `#6D28D9` | Button hover states |
-| **Main Text** | `#FFFFFF` | `#17131F` | Primary headings and text |
-| **Secondary Text** | `#A9A3B2` | `#6B6475` | Captions, labels, and secondary copy |
+| Token                  | Dark Theme | Light Theme | Usage                                |
+| :--------------------- | :--------- | :---------- | :----------------------------------- |
+| **Background**         | `#0B0A0F`  | `#F7F5FC`   | Canvas background                    |
+| **Card Surfaces**      | `#17141E`  | `#FFFFFF`   | Content cards and panels             |
+| **Input Surfaces**     | `#100E16`  | `#FFFFFF`   | Form inputs and controls             |
+| **Secondary Surfaces** | `#17141E`  | `#EEEAF7`   | Sub-panels and pills                 |
+| **Borders**            | `#30283A`  | `#E4DFEC`   | Card, table, and divider borders     |
+| **Primary Accent**     | `#8B5CF6`  | `#7C3AED`   | Primary actions and active states    |
+| **Hover Accent**       | `#7C3AED`  | `#6D28D9`   | Button hover states                  |
+| **Main Text**          | `#FFFFFF`  | `#17131F`   | Primary headings and text            |
+| **Secondary Text**     | `#A9A3B2`  | `#6B6475`   | Captions, labels, and secondary copy |
 
-*Design Rule Enforced:* No purple gradients, no glowing neon effects, no excessive glassmorphism, no rounded pills everywhere, and no fake statistics or testimonials.
+_Design Rule Enforced:_ No purple gradients, no glowing neon effects, no excessive glassmorphism, no rounded pills everywhere, and no fake statistics or testimonials.
 
 ---
 
@@ -150,32 +153,37 @@ D:\GoRide\
 
 - **Node.js:** v18.0.0 or later (Tested on Node v24.14.0)
 - **npm:** v9.0.0 or later (Tested on npm v11.9.0)
-- **MySQL Server:** Required in Phase 2 for persistent data storage. *(Optional in Phase 1; health probe handles absent MySQL safely)*
+- **MySQL Server:** Required in Phase 2 for persistent data storage. _(Optional in Phase 1; health probe handles absent MySQL safely)_
 
 ---
 
 ## 6. Installation & Setup
 
 ### Step 1: Install Backend Dependencies
+
 ```bash
 cd D:\GoRide\server
 npm install
 ```
 
 ### Step 2: Configure Backend Environment
+
 ```bash
 # In D:\GoRide\server
 copy .env.example .env
 ```
-*(Optionally adjust `PORT`, `DB_USER`, `DB_PASSWORD` in `.env` if local MySQL is installed)*
+
+_(Optionally adjust `PORT`, `DB_USER`, `DB_PASSWORD` in `.env` if local MySQL is installed)_
 
 ### Step 3: Install Frontend Dependencies
+
 ```bash
 cd D:\GoRide\client
 npm install
 ```
 
 ### Step 4: Configure Frontend Environment
+
 ```bash
 # In D:\GoRide\client
 copy .env.example .env
@@ -186,45 +194,55 @@ copy .env.example .env
 ## 7. Running the Application
 
 ### Start Backend API Server
+
 ```bash
 cd D:\GoRide\server
 npm run dev
 # Or for standard execution:
 npm start
 ```
+
 The server will boot at `http://localhost:5000`.  
 Verify the health probe directly in your browser or curl:
+
 ```bash
 curl http://localhost:5000/api/health
 ```
 
 ### Start Frontend Client
+
 ```bash
 cd D:\GoRide\client
 npm run dev
 ```
+
 The Vite development server will start at `http://localhost:5173`.
 
 ---
 
 ## 8. Verification & Test Checklist
 
-| Component | Test Action | Expected Result | Status |
-| :--- | :--- | :--- | :--- |
-| **Backend Boot** | `node src/server.js` | Server starts on port 5000 without crashing | Verified |
-| **Health API** | `GET /api/health` | Returns status 200 with operational metrics | Verified |
-| **Database Probe** | `GET /api/health` | Gracefully reports `disconnected` when MySQL server is absent | Verified |
-| **Frontend Build** | `npm run build` in client | Produces optimized production bundle in `dist/` | Tested |
-| **Theme Switching** | Toggle Dark / Light button | DOM switches `.dark`/`.light` and saves in `localStorage` | Verified |
-| **Client Routing** | Navigate all 8 routes | All views render without console errors | Verified |
-| **Secrets Protection** | Inspect git status | `.env` files are ignored by version control | Verified |
+| Component              | Test Action                | Expected Result                                               | Status   |
+| :--------------------- | :------------------------- | :------------------------------------------------------------ | :------- |
+| **Backend Boot**       | `node src/server.js`       | Server starts on port 5000 without crashing                   | Verified |
+| **Health API**         | `GET /api/health`          | Returns status 200 with operational metrics                   | Verified |
+| **Database Probe**     | `GET /api/health`          | Gracefully reports `disconnected` when MySQL server is absent | Verified |
+| **Frontend Build**     | `npm run build` in client  | Produces optimized production bundle in `dist/`               | Tested   |
+| **Theme Switching**    | Toggle Dark / Light button | DOM switches `.dark`/`.light` and saves in `localStorage`     | Verified |
+| **Client Routing**     | Navigate all 8 routes      | All views render without console errors                       | Verified |
+| **Secrets Protection** | Inspect git status         | `.env` files are ignored by version control                   | Verified |
 
 ---
 
 ## 9. Next Steps for Phase 2
 
 Before beginning Phase 2, provide the academic reference documents in `docs/`:
+
 1. Software Requirements Specification (SRS)
 2. Approved UML Class Diagram
 3. Sequence Diagrams (Booking & Settlement)
 4. Use Case Diagram
+
+# RideBooking
+
+ride booking system project SE.
