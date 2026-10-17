@@ -53,3 +53,8 @@ PARTIALLY VERIFIED — do not claim full Phase 1 acceptance until the retry-to-a
 ## Git and Delivery
 - Intended branch: `akshay`
 - Commit and push status: pending final diff review.
+
+### Final availability check
+- A read-only MySQL query on 2026-10-17 found zero currently eligible STANDARD drivers (approved driver and vehicle, active/online, fresh location, and no active ride).
+- Therefore, successful retry to a second eligible driver could not be verified in the current database state.
+- No driver records were modified to force this scenario.
