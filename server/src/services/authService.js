@@ -38,6 +38,8 @@ export async function register({
   vehicleNo,
   vehicleModel,
   vehicleCategory,
+  vehicleColor,
+  passengerCapacity,
 }) {
   if (!name || typeof name !== 'string' || !name.trim()) {
     throw { statusCode: 400, code: 'INVALID_NAME', message: 'Full legal name is required.' };
@@ -157,11 +159,28 @@ export async function register({
       const cleanLicense = licenseNo.trim();
       const cleanVehicleNo = vehicleNo.trim();
       const cleanVehicleModel = vehicleModel.trim();
+      const cleanVehicleColor = (vehicleColor && typeof vehicleColor === 'string' && vehicleColor.trim())
+        ? vehicleColor.trim()
+        : 'White';
+      const cleanPassengerCapacity = parseInt(passengerCapacity, 10) > 0
+        ? parseInt(passengerCapacity, 10)
+        : (cleanVehicleCategory === 'XL' ? 6 : 4);
 
       const [driverResult] = await connection.query(
-        `INSERT INTO driver_profiles (user_id, license_no, vehicle_no, vehicle_model, vehicle_category, approval_status, is_available)
-         VALUES (?, ?, ?, ?, ?, 'PENDING', FALSE)`,
-        [userId, cleanLicense, cleanVehicleNo, cleanVehicleModel, cleanVehicleCategory]
+        `INSERT INTO driver_profiles (
+           user_id, license_no, vehicle_no, vehicle_model, vehicle_category,
+           vehicle_color, passenger_capacity, approval_status, vehicle_approval_status,
+           is_vehicle_active, is_available
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', TRUE, FALSE)`,
+        [
+          userId,
+          cleanLicense,
+          cleanVehicleNo,
+          cleanVehicleModel,
+          cleanVehicleCategory,
+          cleanVehicleColor,
+          cleanPassengerCapacity,
+        ]
       );
 
       driverProfile = {
@@ -170,7 +189,11 @@ export async function register({
         vehicle_no: cleanVehicleNo,
         vehicle_model: cleanVehicleModel,
         vehicle_category: cleanVehicleCategory,
+        vehicle_color: cleanVehicleColor,
+        passenger_capacity: cleanPassengerCapacity,
         approval_status: 'PENDING',
+        vehicle_approval_status: 'PENDING',
+        is_vehicle_active: true,
         is_available: false,
       };
     }

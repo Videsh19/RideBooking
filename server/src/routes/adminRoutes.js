@@ -168,11 +168,21 @@ router.get('/system-stats', async (req, res, next) => {
        FROM payments`
     );
 
+    const [vehicleStats] = await pool.query(
+      `SELECT vehicle_category, COUNT(*) as count FROM driver_profiles GROUP BY vehicle_category`
+    );
+
+    const [dispatchFailureCount] = await pool.query(
+      `SELECT COUNT(*) as count FROM dispatch_failures`
+    );
+
     res.status(200).json({
       success: true,
       data: {
         usersByRole: roleCounts,
         driversByStatus: driverCounts,
+        vehiclesByCategory: vehicleStats,
+        totalDispatchFailures: dispatchFailureCount[0]?.count || 0,
         bookingsByStatus: bookingCounts,
         totals: totalBookings[0] || { total: 0, totalRevenue: 0 },
         payments: paymentStats[0] || { totalPayments: 0, totalCollectedRevenue: 0 },
@@ -180,6 +190,69 @@ router.get('/system-stats', async (req, res, next) => {
         total_collected_revenue: Number(paymentStats[0]?.totalCollectedRevenue || 0),
         systemTime: new Date().toISOString(),
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/vehicles
+ * Administrator fleet management: list all vehicles and statuses
+ */
+router.get('/vehicles', async (req, res, next) => {
+  try {
+    const vehicles = await driverService.getAllFleetVehicles();
+    res.status(200).json({
+      success: true,
+      data: vehicles,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/admin/vehicles/:id/status
+ * Administrator fleet management: approve, reject, or activate/deactivate vehicle
+ */
+router.patch('/vehicles/:id/status', async (req, res, next) => {
+  try {
+    const driverId = parseInt(req.params.id, 10);
+    if (isNaN(driverId)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+      });
+    }
+
+    const { vehicleApprovalStatus, isVehicleActive } = req.body;
+    const updated = await driverService.updateVehicleStatus(driverId, {
+      vehicleApprovalStatus,
+      isVehicleActive,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: updated,
+      message: `Vehicle status for driver ID ${driverId} updated successfully.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/dispatch-failures
+ * Administrator fleet management: view dispatch failure audit log
+ */
+router.get('/dispatch-failures', async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const failures = await driverService.getDispatchFailures(limit);
+    res.status(200).json({
+      success: true,
+      data: failures,
     });
   } catch (err) {
     next(err);

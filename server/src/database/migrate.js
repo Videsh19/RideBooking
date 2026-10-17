@@ -231,6 +231,52 @@ export async function runMigrations() {
       await connection.query("ALTER TABLE bookings ADD INDEX idx_bookings_vehicle_tier (vehicle_tier)");
     }
 
+    // -------------------------------------------------------------------------
+    // Phase 1 Fleet Migrations: vehicle_color, passenger_capacity, vehicle_approval_status, is_vehicle_active
+    // -------------------------------------------------------------------------
+    const [vehCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'vehicle_color'");
+    if (vehCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN vehicle_color VARCHAR(50) DEFAULT 'White' AFTER vehicle_category");
+    }
+
+    const [capCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'passenger_capacity'");
+    if (capCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN passenger_capacity INT NOT NULL DEFAULT 4 AFTER vehicle_color");
+    }
+
+    const [vehAppCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'vehicle_approval_status'");
+    if (vehAppCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN vehicle_approval_status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'APPROVED' AFTER passenger_capacity");
+    }
+
+    const [vehActCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'is_vehicle_active'");
+    if (vehActCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN is_vehicle_active BOOLEAN NOT NULL DEFAULT TRUE AFTER vehicle_approval_status");
+    }
+
+    // Phase 1 Fare Breakdown Persistence
+    const [baseFareCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'base_fare'");
+    if (baseFareCol.length === 0) {
+      await connection.query("ALTER TABLE bookings ADD COLUMN base_fare DECIMAL(10, 2) NULL AFTER total_fare");
+    }
+
+    const [rateKmCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'rate_per_km'");
+    if (rateKmCol.length === 0) {
+      await connection.query("ALTER TABLE bookings ADD COLUMN rate_per_km DECIMAL(10, 2) NULL AFTER base_fare");
+    }
+
+    // Phase 1 Dispatch Failures Table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS dispatch_failures (
+        failure_id INT AUTO_INCREMENT PRIMARY KEY,
+        booking_id INT NOT NULL,
+        reason VARCHAR(255) NOT NULL,
+        failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE,
+        INDEX idx_dispatch_failure_booking (booking_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     // Seed or update standard demo accounts with valid bcrypt hashes
     const userPassHash = bcrypt.hashSync('Password123!', 10);
     const adminPassHash = bcrypt.hashSync('AdminPassword123!', 10);

@@ -27,7 +27,7 @@ router.post('/', requireRole(['RIDER']), async (req, res, next) => {
       userId: req.user.user_id,
       bookingId,
       paymentMethod,
-      simulateFailure: Boolean(simulateFailure),
+      simulateFailure: simulateFailure === true,
     });
 
     res.status(201).json({

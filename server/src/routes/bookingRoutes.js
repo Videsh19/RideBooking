@@ -99,7 +99,7 @@ router.post(
         userId: req.user.user_id,
         bookingId: req.params.id,
         paymentMethod,
-        simulateFailure: Boolean(simulateFailure),
+        simulateFailure: simulateFailure === true,
       });
 
       res.status(201).json({

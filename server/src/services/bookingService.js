@@ -839,8 +839,9 @@ export async function createBooking({
     const [bookingResult] = await connection.query(
       `INSERT INTO bookings (
          user_id, route_id, pickup_address, dest_address,
-         pickup_zone, dest_zone, vehicle_tier, status, total_fare
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?)`,
+         pickup_zone, dest_zone, vehicle_tier, status, total_fare,
+         base_fare, rate_per_km
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)`,
       [
         userId,
         routeId,
@@ -850,6 +851,8 @@ export async function createBooking({
         routeInfo.destTerritory,
         chosenCategory,
         fareInfo.totalFare,
+        fareInfo.baseFare,
+        fareInfo.ratePerKm,
       ]
     );
     const bookingId = bookingResult.insertId;
@@ -883,6 +886,9 @@ export async function getBookingById(bookingId) {
        d.vehicle_no AS driver_vehicle_no,
        d.vehicle_model AS driver_vehicle_model,
        d.vehicle_category AS driver_vehicle_category,
+       d.vehicle_color AS driver_vehicle_color,
+       d.passenger_capacity AS driver_vehicle_capacity,
+       d.vehicle_approval_status AS driver_vehicle_status,
        d.rating AS driver_rating,
        b.pickup_address,
        b.dest_address,
@@ -893,6 +899,8 @@ export async function getBookingById(bookingId) {
        b.status,
        b.payment_status,
        b.total_fare,
+       b.base_fare,
+       b.rate_per_km,
        b.cancellation_reason,
        b.cancellation_fee,
        b.cancelled_at,
@@ -952,6 +960,9 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        d.vehicle_no AS driver_vehicle_no,
        d.vehicle_model AS driver_vehicle_model,
        d.vehicle_category AS driver_vehicle_category,
+       d.vehicle_color AS driver_vehicle_color,
+       d.passenger_capacity AS driver_vehicle_capacity,
+       d.vehicle_approval_status AS driver_vehicle_status,
        d.rating AS driver_rating,
        b.pickup_address,
        b.dest_address,
@@ -962,6 +973,8 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        b.status,
        b.payment_status,
        b.total_fare,
+       b.base_fare,
+       b.rate_per_km,
        b.cancellation_reason,
        b.cancellation_fee,
        b.cancelled_at,

@@ -16,6 +16,8 @@ export async function registerHandler(req, res, next) {
       vehicleNo,
       vehicleModel,
       vehicleCategory,
+      vehicleColor,
+      passengerCapacity,
     } = req.body;
 
     const result = await authService.register({
@@ -28,6 +30,8 @@ export async function registerHandler(req, res, next) {
       vehicleNo,
       vehicleModel,
       vehicleCategory,
+      vehicleColor,
+      passengerCapacity,
     });
 
     res.status(201).json({

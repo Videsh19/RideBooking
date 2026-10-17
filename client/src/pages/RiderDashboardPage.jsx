@@ -519,20 +519,18 @@ export default function RiderDashboardPage() {
                         <div
                           key={tier.id}
                           onClick={() => setSelectedTier(tier.id)}
-                          className={`p-3 rounded-lg border cursor-pointer transition-all duration-150 ${
-                            isSelected
+                          className={`p-3 rounded-lg border cursor-pointer transition-all duration-150 ${isSelected
                               ? 'border-theme-primary bg-theme-surface'
                               : 'border-theme-border hover:border-theme-border hover:bg-theme-surface/50'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
                               <div
-                                className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                                  isSelected
+                                className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected
                                     ? 'bg-theme-primary text-white'
                                     : 'bg-theme-surface text-theme-text-secondary border border-theme-border'
-                                }`}
+                                  }`}
                               >
                                 <Icon className="w-4 h-4" />
                               </div>
@@ -907,9 +905,11 @@ export default function RiderDashboardPage() {
                   <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
                     <CheckCircle2 className="w-7 h-7" />
                   </div>
-                  <h4 className="text-sm font-bold text-emerald-400">Payment Simulation Completed</h4>
+                  <h4 className="text-sm font-bold text-emerald-400">
+                    Simulated Payment Successful
+                  </h4>
                   <p className="text-xs text-theme-text-secondary">
-                    Your ride has been settled successfully in the database.
+                    This demo transaction was recorded successfully. No real money was transferred.
                   </p>
                 </div>
 
@@ -983,7 +983,7 @@ export default function RiderDashboardPage() {
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     {[
-                      { id: 'UPI', name: 'UPI', desc: 'Google Pay / PhonePe' },
+                      { id: 'UPI', name: 'Simulated UPI', desc: 'Google Pay / PhonePe' },
                       { id: 'Card', name: 'Card', desc: 'Credit / Debit Card' },
                       { id: 'Cash', name: 'Cash', desc: 'Cash to Driver' },
                       { id: 'Wallet', name: 'Wallet', desc: 'Digital Wallet' },
@@ -993,11 +993,10 @@ export default function RiderDashboardPage() {
                         key={m.id}
                         type="button"
                         onClick={() => setPaymentMethod(m.id)}
-                        className={`p-2.5 rounded-xl border text-left transition-all ${
-                          paymentMethod === m.id
+                        className={`p-2.5 rounded-xl border text-left transition-all ${paymentMethod === m.id
                             ? 'border-purple-500 bg-purple-500/10 text-purple-300 font-semibold'
                             : 'border-theme-border bg-theme-surface/30 text-theme-text hover:border-theme-border/80'
-                        }`}
+                          }`}
                       >
                         <div className="text-xs font-bold">{m.name}</div>
                         <div className="text-[10px] text-theme-text-secondary">{m.desc}</div>
@@ -1129,11 +1128,10 @@ export default function RiderDashboardPage() {
                         className="p-1 transition-transform hover:scale-125 focus:outline-none"
                       >
                         <Star
-                          className={`w-7 h-7 transition-colors ${
-                            star <= (ratingHover || ratingStars)
+                          className={`w-7 h-7 transition-colors ${star <= (ratingHover || ratingStars)
                               ? 'fill-amber-400 text-amber-400'
                               : 'text-theme-border fill-transparent'
-                          }`}
+                            }`}
                         />
                       </button>
                     ))}

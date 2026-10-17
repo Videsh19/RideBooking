@@ -17,6 +17,8 @@ import {
   FileCheck,
   BadgeAlert,
   CreditCard,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/layout/DashboardLayout';
@@ -30,6 +32,8 @@ const API_BASE_URL = 'http://localhost:5000/api';
 export default function AdminDashboardPage() {
   const { token } = useAuth();
   const [usersList, setUsersList] = useState([]);
+  const [vehiclesList, setVehiclesList] = useState([]);
+  const [dispatchFailures, setDispatchFailures] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [paymentsList, setPaymentsList] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState(null);
@@ -37,6 +41,7 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionDriverId, setActionDriverId] = useState(null);
+  const [actionVehicleId, setActionVehicleId] = useState(null);
   const [actionPaymentId, setActionPaymentId] = useState(null);
 
   const fetchAdminData = async () => {
@@ -45,7 +50,7 @@ export default function AdminDashboardPage() {
       setLoading(true);
       setError(null);
 
-      const [usersRes, statsRes, appsRes, paymentsRes] = await Promise.all([
+      const [usersRes, statsRes, appsRes, paymentsRes, vehiclesRes, failuresRes] = await Promise.all([
         fetch(`${API_BASE_URL}/admin/users`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
@@ -58,6 +63,12 @@ export default function AdminDashboardPage() {
         fetch(`${API_BASE_URL}/payments/admin/all`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        fetch(`${API_BASE_URL}/admin/vehicles`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_BASE_URL}/admin/dispatch-failures`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
 
       if (!usersRes.ok || !statsRes.ok || !appsRes.ok) {
@@ -68,12 +79,16 @@ export default function AdminDashboardPage() {
       const statsJson = await statsRes.json();
       const appsJson = await appsRes.json();
       const paymentsJson = paymentsRes.ok ? await paymentsRes.json() : { data: [], summary: null };
+      const vehiclesJson = vehiclesRes.ok ? await vehiclesRes.json() : { data: [] };
+      const failuresJson = failuresRes.ok ? await failuresRes.json() : { data: [] };
 
       setUsersList(usersJson.data || []);
       setStats(statsJson.data || null);
       setPendingApplications(appsJson.data || []);
       setPaymentsList(paymentsJson.data || []);
       setPaymentSummary(paymentsJson.summary || null);
+      setVehiclesList(vehiclesJson.data || []);
+      setDispatchFailures(failuresJson.data || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -106,6 +121,54 @@ export default function AdminDashboardPage() {
       alert(`Refund error: ${err.message}`);
     } finally {
       setActionPaymentId(null);
+    }
+  };
+
+  const handleToggleVehicleActive = async (driverId, currentActive) => {
+    try {
+      setActionVehicleId(driverId);
+      const res = await fetch(`${API_BASE_URL}/admin/vehicles/${driverId}/status`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ isVehicleActive: !currentActive }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error?.message || 'Failed to update vehicle activation state.');
+      } else {
+        await fetchAdminData();
+      }
+    } catch (err) {
+      alert(`Error updating vehicle: ${err.message}`);
+    } finally {
+      setActionVehicleId(null);
+    }
+  };
+
+  const handleSetVehicleApproval = async (driverId, newStatus) => {
+    try {
+      setActionVehicleId(driverId);
+      const res = await fetch(`${API_BASE_URL}/admin/vehicles/${driverId}/status`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ vehicleApprovalStatus: newStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error?.message || 'Failed to update vehicle approval status.');
+      } else {
+        await fetchAdminData();
+      }
+    } catch (err) {
+      alert(`Error updating vehicle status: ${err.message}`);
+    } finally {
+      setActionVehicleId(null);
     }
   };
 
@@ -597,6 +660,208 @@ export default function AdminDashboardPage() {
                         ) : (
                           <span className="text-[10px] text-theme-text-secondary italic">N/A</span>
                         )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {/* 4. Fleet Vehicle Inventory & Dispatch Controls */}
+        <Card
+          title="Vehicle Fleet & Category Dispatch Management"
+          subtitle="Municipal vehicle certification, category tiers (Standard, Comfort, XL), and active dispatch controls"
+          badge={
+            <Badge variant="purple" size="sm">
+              {vehiclesList.length} Registered Vehicles
+            </Badge>
+          }
+        >
+          {loading ? (
+            <div className="py-8 flex justify-center">
+              <LoadingSpinner label="Loading fleet inventory from MySQL..." />
+            </div>
+          ) : vehiclesList.length === 0 ? (
+            <p className="text-xs text-theme-text-secondary py-4 text-center">
+              No registered fleet vehicles found.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-theme-border text-theme-text-secondary">
+                    <th className="pb-2.5 font-semibold">Vehicle & Reg No</th>
+                    <th className="pb-2.5 font-semibold">Category & Capacity</th>
+                    <th className="pb-2.5 font-semibold">Assigned Driver Partner</th>
+                    <th className="pb-2.5 font-semibold">Vehicle Approval</th>
+                    <th className="pb-2.5 font-semibold">Dispatch State</th>
+                    <th className="pb-2.5 font-semibold text-right">Fleet Administrative Controls</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-theme-border text-theme-text">
+                  {vehiclesList.map((veh) => (
+                    <tr key={veh.driver_id}>
+                      <td className="py-3">
+                        <div className="font-semibold text-theme-text">{veh.vehicle_model}</div>
+                        <div className="font-mono text-[10px] text-theme-text-secondary mt-0.5">
+                          {veh.vehicle_no} • {veh.vehicle_color || 'White'}
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          veh.vehicle_category === 'XL'
+                            ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                            : veh.vehicle_category === 'COMFORT'
+                            ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                        }`}>
+                          {veh.vehicle_category || 'STANDARD'}
+                        </span>
+                        <div className="text-[10px] text-theme-text-secondary mt-1">
+                          Cap: {veh.passenger_capacity || 4} Passengers
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <div className="font-medium">{veh.driver_name}</div>
+                        <div className="text-[10px] text-theme-text-secondary font-mono">{veh.driver_phone}</div>
+                        <div className="text-[10px] mt-0.5">
+                          {veh.is_available ? (
+                            <span className="text-emerald-400 font-semibold">● Online / On-Duty</span>
+                          ) : (
+                            <span className="text-theme-text-secondary">○ Offline</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <Badge
+                          variant={
+                            veh.vehicle_approval_status === 'APPROVED'
+                              ? 'success'
+                              : veh.vehicle_approval_status === 'REJECTED'
+                              ? 'error'
+                              : 'warning'
+                          }
+                          size="sm"
+                        >
+                          {veh.vehicle_approval_status || 'APPROVED'}
+                        </Badge>
+                      </td>
+                      <td className="py-3">
+                        {veh.is_vehicle_active ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Active for Dispatch
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-400">
+                            <X className="w-3.5 h-3.5" /> Deactivated
+                          </span>
+                        )}
+                        {veh.active_rides_count > 0 && (
+                          <div className="mt-1">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              Active Ride In Progress
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {veh.vehicle_approval_status !== 'APPROVED' && (
+                            <Button
+                              variant="success"
+                              size="sm"
+                              onClick={() => handleSetVehicleApproval(veh.driver_id, 'APPROVED')}
+                              disabled={actionVehicleId === veh.driver_id}
+                            >
+                              Approve
+                            </Button>
+                          )}
+                          {veh.vehicle_approval_status !== 'REJECTED' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleSetVehicleApproval(veh.driver_id, 'REJECTED')}
+                              disabled={actionVehicleId === veh.driver_id}
+                              className="text-rose-400 border-rose-800/40"
+                            >
+                              Reject
+                            </Button>
+                          )}
+                          <Button
+                            variant={veh.is_vehicle_active ? 'secondary' : 'primary'}
+                            size="sm"
+                            onClick={() => handleToggleVehicleActive(veh.driver_id, veh.is_vehicle_active)}
+                            disabled={actionVehicleId === veh.driver_id}
+                          >
+                            {veh.is_vehicle_active ? 'Deactivate' : 'Activate'}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {/* 5. Dispatch Failures & Rejections Log */}
+        <Card
+          title="Intelligent Dispatch Telemetry & Failure Audit Log"
+          subtitle="Audit log of unassigned ride requests, driver shortages, and dispatch rejections"
+          badge={
+            <Badge variant={dispatchFailures.length > 0 ? 'warning' : 'neutral'} size="sm">
+              {dispatchFailures.length} Incidents
+            </Badge>
+          }
+        >
+          {loading ? (
+            <div className="py-8 flex justify-center">
+              <LoadingSpinner label="Loading dispatch telemetry..." />
+            </div>
+          ) : dispatchFailures.length === 0 ? (
+            <p className="text-xs text-theme-text-secondary py-4 text-center">
+              Zero dispatch failures recorded. All ride requests have been paired with certified drivers.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-theme-border text-theme-text-secondary">
+                    <th className="pb-2.5 font-semibold">Incident ID</th>
+                    <th className="pb-2.5 font-semibold">Booking ID</th>
+                    <th className="pb-2.5 font-semibold">Passenger & Category</th>
+                    <th className="pb-2.5 font-semibold">Route</th>
+                    <th className="pb-2.5 font-semibold">Reason</th>
+                    <th className="pb-2.5 font-semibold">Logged At</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-theme-border text-theme-text">
+                  {dispatchFailures.map((f) => (
+                    <tr key={f.failure_id}>
+                      <td className="py-3 font-mono text-[11px] text-theme-text-secondary">
+                        INC-{f.failure_id}
+                      </td>
+                      <td className="py-3 font-mono text-[11px] text-theme-primary font-semibold">
+                        GR-BK-{f.booking_id}
+                      </td>
+                      <td className="py-3">
+                        <div className="font-medium">{f.passenger_name}</div>
+                        <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 mt-0.5">
+                          {f.vehicle_tier}
+                        </span>
+                      </td>
+                      <td className="py-3 max-w-[200px] truncate">
+                        <div className="truncate text-theme-text">{f.pickup_address}</div>
+                        <div className="text-[10px] text-theme-text-secondary truncate mt-0.5">→ {f.dest_address}</div>
+                      </td>
+                      <td className="py-3 text-amber-400">
+                        {f.reason}
+                      </td>
+                      <td className="py-3 font-mono text-[10px] text-theme-text-secondary">
+                        {f.failed_at ? new Date(f.failed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--'}
                       </td>
                     </tr>
                   ))}
