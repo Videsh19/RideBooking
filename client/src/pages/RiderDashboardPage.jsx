@@ -1436,6 +1436,39 @@ export default function RiderDashboardPage() {
                   </div>
                 </div>
 
+                {paymentMethod === 'UPI' && (
+                  <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-4 flex flex-col items-center gap-3 text-center">
+                    <span className="text-xs font-semibold text-purple-300">
+                      Demo-only QR graphic
+                    </span>
+                    <svg
+                      viewBox="0 0 120 120"
+                      role="img"
+                      aria-label="Decorative demo QR graphic; not scannable"
+                      className="h-32 w-32 rounded-lg bg-white p-2"
+                    >
+                      <path
+                        fill="#111827"
+                        d="M8 8h24v24H8zM14 14v12h12V14zM88 8h24v24H88zM94 14v12h12V14zM8 88h24v24H8zM14 94v12h12V94zM40 8h8v8h-8zM56 8h8v16h-8zM72 8h8v8h-8zM40 24h8v16h-8zM56 32h8v8h-8zM72 24h8v16h-8zM8 40h8v8H8zM24 40h16v8H24zM48 48h8v8h-8zM64 48h16v8H64zM8 56h16v8H8zM32 56h8v16h-8zM48 64h16v8H48zM72 56h8v16h-8zM88 40h8v16h-8zM104 40h8v8h-8zM88 64h16v8H88zM40 80h8v8h-8zM56 80h8v16h-8zM72 80h8v8h-8zM88 80h8v16h-8zM104 80h8v8h-8zM40 96h8v16h-8zM72 96h8v16h-8zM96 96h16v8H96z"
+                      />
+                      <rect x="38" y="44" width="44" height="32" rx="4" fill="white" />
+                      <text
+                        x="60"
+                        y="64"
+                        textAnchor="middle"
+                        fill="#7c3aed"
+                        fontSize="12"
+                        fontWeight="700"
+                      >
+                        DEMO
+                      </text>
+                    </svg>
+                    <p className="text-xs font-bold text-amber-300">
+                      DEMO ONLY — NOT A REAL PAYMENT QR. No money will be transferred.
+                    </p>
+                  </div>
+                )}
+
                 {/* Simulate Failure Checkbox (for testing failure handling & retries) */}
                 <div className="p-3 rounded-xl border border-theme-border bg-theme-surface/30 flex items-center justify-between">
                   <div className="pr-3">
