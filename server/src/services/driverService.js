@@ -3,6 +3,9 @@ import { getDbPool } from '../config/db.js';
 import { getBookingById } from './bookingService.js';
 import { UPLOADS_DIR } from '../middleware/uploadMiddleware.js';
 
+const LOCATION_FIX_MAX_AGE_MS = 5 * 60 * 1000;
+const LOCATION_FIX_MAX_FUTURE_MS = 30 * 1000;
+
 /**
  * Haversine distance calculation between two (lat, lon) coordinates in kilometers
  */
@@ -376,10 +379,20 @@ export async function startRide(userId, bookingId) {
   }
 
   const pool = getDbPool();
-  await pool.query(
-    `UPDATE bookings SET status = 'ONGOING', updated_at = NOW() WHERE booking_id = ?`,
-    [bookingId]
+  const [result] = await pool.query(
+    `UPDATE bookings
+     SET status = 'ONGOING', updated_at = NOW()
+     WHERE booking_id = ? AND status = 'CONFIRMED' AND driver_id = ?`,
+    [bookingId, profile.driver_id]
   );
+
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'RIDE_STATUS_CONFLICT',
+      message: 'Ride status or driver assignment changed before the ride could be started.',
+    };
+  }
 
   return await getBookingById(bookingId);
 }
@@ -408,10 +421,20 @@ export async function completeRide(userId, bookingId) {
   }
 
   const pool = getDbPool();
-  await pool.query(
-    `UPDATE bookings SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW() WHERE booking_id = ?`,
-    [bookingId]
+  const [result] = await pool.query(
+    `UPDATE bookings
+     SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW()
+     WHERE booking_id = ? AND status = 'ONGOING' AND driver_id = ?`,
+    [bookingId, profile.driver_id]
   );
+
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'RIDE_STATUS_CONFLICT',
+      message: 'Ride status or driver assignment changed before the ride could be completed.',
+    };
+  }
 
   return await getBookingById(bookingId);
 }
@@ -698,7 +721,7 @@ export async function getDispatchFailures(limit = 50) {
 /**
  * Update driver geographic location coordinates (REQ-022)
  */
-export async function updateDriverLocation(userId, { latitude, longitude }) {
+export async function updateDriverLocation(userId, { latitude, longitude, fixTimestampMs }) {
   const profile = await getDriverProfile(userId);
   if (profile.approval_status !== 'APPROVED') {
     throw {
@@ -708,27 +731,73 @@ export async function updateDriverLocation(userId, { latitude, longitude }) {
     };
   }
 
-  const numLat = parseFloat(latitude);
-  const numLon = parseFloat(longitude);
-  if (isNaN(numLat) || isNaN(numLon) || numLat < -90 || numLat > 90 || numLon < -180 || numLon > 180) {
+  if (
+    typeof latitude !== 'number' ||
+    !Number.isFinite(latitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    typeof longitude !== 'number' ||
+    !Number.isFinite(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
     throw {
       statusCode: 400,
       code: 'INVALID_COORDINATES',
-      message: 'Valid numeric latitude [-90, 90] and longitude [-180, 180] are required.',
+      message: 'Latitude and longitude must be finite JSON numbers within [-90, 90] and [-180, 180].',
+    };
+  }
+
+  if (
+    typeof fixTimestampMs !== 'number' ||
+    !Number.isSafeInteger(fixTimestampMs) ||
+    fixTimestampMs <= 0
+  ) {
+    throw {
+      statusCode: 400,
+      code: 'INVALID_FIX_TIMESTAMP',
+      message: 'GPS fix timestamp must be a positive integer Unix timestamp in milliseconds.',
+    };
+  }
+
+  const now = Date.now();
+  if (fixTimestampMs < now - LOCATION_FIX_MAX_AGE_MS) {
+    throw {
+      statusCode: 400,
+      code: 'STALE_LOCATION_FIX',
+      message: 'GPS fix is more than five minutes old. Submit a fresh location fix.',
+    };
+  }
+  if (fixTimestampMs > now + LOCATION_FIX_MAX_FUTURE_MS) {
+    throw {
+      statusCode: 400,
+      code: 'FUTURE_LOCATION_FIX',
+      message: 'GPS fix timestamp is more than 30 seconds in the future.',
     };
   }
 
   const pool = getDbPool();
-  await pool.query(
+  const [result] = await pool.query(
     `UPDATE driver_profiles
-     SET current_latitude = ?, current_longitude = ?, location_updated_at = NOW()
-     WHERE user_id = ?`,
-    [numLat, numLon, userId]
+     SET current_latitude = ?, current_longitude = ?,
+         location_updated_at = NOW(), location_fix_timestamp_ms = ?
+     WHERE user_id = ?
+       AND (location_fix_timestamp_ms IS NULL OR location_fix_timestamp_ms < ?)`,
+    [latitude, longitude, fixTimestampMs, userId, fixTimestampMs]
   );
 
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'LOCATION_FIX_OUT_OF_ORDER',
+      message: 'This GPS fix is not newer than the latest stored location.',
+    };
+  }
+
   return {
-    latitude: numLat,
-    longitude: numLon,
+    latitude,
+    longitude,
+    fix_timestamp_ms: fixTimestampMs,
     updated_at: new Date().toISOString(),
   };
 }
@@ -836,15 +905,15 @@ export async function findNearestAvailableDrivers(bookingId) {
        AND d.vehicle_category = ?
        AND d.current_latitude IS NOT NULL
        AND d.current_longitude IS NOT NULL
-       AND d.location_updated_at IS NOT NULL
-       AND d.location_updated_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+       AND d.location_fix_timestamp_ms IS NOT NULL
+       AND d.location_fix_timestamp_ms >= ?
        AND d.driver_id NOT IN (
          SELECT driver_id FROM driver_booking_rejections WHERE booking_id = ?
        )
        AND d.driver_id NOT IN (
          SELECT driver_id FROM bookings WHERE status IN ('CONFIRMED', 'ONGOING') AND driver_id IS NOT NULL
        )`,
-    [bookingCategory, bookingId]
+    [bookingCategory, Date.now() - LOCATION_FIX_MAX_AGE_MS, bookingId]
   );
 
   if (candidates.length === 0) {
@@ -956,8 +1025,7 @@ export async function assignNearestDriver(bookingId) {
         const [driverRows] = await connection.query(
           `SELECT driver_id, approval_status, is_available,
                   vehicle_approval_status, is_vehicle_active,
-                  vehicle_category, current_latitude, current_longitude,
-                  location_updated_at
+                  vehicle_category, current_latitude, current_longitude
            FROM driver_profiles
            WHERE driver_id = ? FOR UPDATE`,
           [candidate.driver_id]
@@ -987,11 +1055,11 @@ export async function assignNearestDriver(bookingId) {
 
         const [freshnessRows] = await connection.query(
           `SELECT (
-             location_updated_at IS NOT NULL
-             AND location_updated_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+             location_fix_timestamp_ms IS NOT NULL
+             AND location_fix_timestamp_ms >= ?
            ) AS location_fresh
            FROM driver_profiles WHERE driver_id = ?`,
-          [driver.driver_id]
+          [Date.now() - LOCATION_FIX_MAX_AGE_MS, driver.driver_id]
         );
 
         if (

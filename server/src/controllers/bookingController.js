@@ -77,6 +77,38 @@ export async function getBookingHandler(req, res, next) {
 }
 
 /**
+ * GET /api/bookings/:id/tracking
+ * Retrieve live driver location for the authenticated rider's own booking.
+ */
+export async function getBookingTrackingHandler(req, res, next) {
+  try {
+    const bookingIdParam = req.params.id;
+    const bookingId = /^[0-9]+$/.test(bookingIdParam)
+      ? Number(bookingIdParam)
+      : NaN;
+    if (!Number.isSafeInteger(bookingId) || bookingId <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+      });
+    }
+
+    const tracking = await bookingService.getBookingTracking({
+      bookingId,
+      userId: req.user.user_id,
+      includeRouteGeometry: req.query.includeRouteGeometry === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: tracking,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * GET /api/bookings
  * List passenger bookings
  */

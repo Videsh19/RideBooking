@@ -49,8 +49,15 @@ router.patch('/duty', async (req, res, next) => {
  */
 router.patch('/location', async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
-    const result = await driverService.updateDriverLocation(req.user.user_id, { latitude, longitude });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body
+      : {};
+    const { latitude, longitude, fixTimestampMs } = body;
+    const result = await driverService.updateDriverLocation(req.user.user_id, {
+      latitude,
+      longitude,
+      fixTimestampMs,
+    });
     res.status(200).json({
       success: true,
       data: result,

@@ -43,6 +43,7 @@ export default function DriverDashboardPage() {
   const [refreshFeedback, setRefreshFeedback] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState(null);
+  const [locationFeedback, setLocationFeedback] = useState(null);
 
   // Live dispatch and ride state
   const [dispatchQueue, setDispatchQueue] = useState([]);
@@ -143,6 +144,138 @@ export default function DriverDashboardPage() {
     }, 8000);
     return () => clearInterval(interval);
   }, [token, isOnline, profile?.approval_status]);
+
+  useEffect(() => {
+    if (
+      !token ||
+      !user ||
+      user.role !== 'DRIVER' ||
+      !isOnline ||
+      profile?.approval_status !== 'APPROVED'
+    ) {
+      setLocationFeedback(null);
+      return undefined;
+    }
+
+    if (!navigator.geolocation) {
+      setLocationFeedback({
+        type: 'error',
+        message: 'Location sharing is unavailable because this browser does not support geolocation.',
+      });
+      return undefined;
+    }
+
+    let isActive = true;
+    let requestInFlight = false;
+    let activeRequestController = null;
+    let watchId;
+
+    const reportGeolocationError = (geoError) => {
+      if (!isActive) return;
+
+      const message = geoError.code === geoError.PERMISSION_DENIED
+        ? 'Location permission was denied. Allow location access in your browser settings to share your position.'
+        : geoError.code === geoError.POSITION_UNAVAILABLE
+          ? 'Your current location is unavailable. Check your device GPS or location settings.'
+          : geoError.code === geoError.TIMEOUT
+            ? 'Getting your location timed out. The browser will continue trying.'
+            : 'Unable to read your current location.';
+
+      setLocationFeedback({ type: 'error', message });
+    };
+
+    const sendLocation = async (position) => {
+      if (!isActive || requestInFlight) return;
+
+      const { latitude, longitude } = position.coords;
+      const fixTimestampMs = position.timestamp;
+      const now = Date.now();
+
+      if (!Number.isSafeInteger(fixTimestampMs) || fixTimestampMs <= 0) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The browser returned an invalid GPS timestamp. Waiting for a valid location fix.',
+        });
+        return;
+      }
+      if (fixTimestampMs < now - 5 * 60 * 1000) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The GPS fix is stale. Waiting for a fresh location.',
+        });
+        return;
+      }
+      if (fixTimestampMs > now + 30 * 1000) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The GPS fix timestamp is ahead of the current time. Waiting for a valid location.',
+        });
+        return;
+      }
+
+      // Drop overlapping samples rather than queueing fixes that may become stale.
+      requestInFlight = true;
+      const controller = new AbortController();
+      activeRequestController = controller;
+      try {
+        const res = await fetch(`${API_BASE_URL}/driver/location`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ latitude, longitude, fixTimestampMs }),
+          signal: controller.signal,
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(json.error?.message || 'Could not update your location.');
+        }
+
+        if (isActive) {
+          setLocationFeedback({
+            type: 'success',
+            message: 'Your current location is being shared.',
+          });
+        }
+      } catch (locationError) {
+        if (isActive) {
+          setLocationFeedback({
+            type: 'error',
+            message: locationError instanceof TypeError
+              ? 'Network error while sharing your location. Check your internet connection.'
+              : locationError.message || 'Could not update your location.',
+          });
+        }
+      } finally {
+        if (activeRequestController === controller) {
+          activeRequestController = null;
+        }
+        requestInFlight = false;
+      }
+    };
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        sendLocation,
+        reportGeolocationError,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      );
+    } catch (geoError) {
+      setLocationFeedback({
+        type: 'error',
+        message: geoError.message || 'Unable to start browser location sharing.',
+      });
+    }
+
+    return () => {
+      isActive = false;
+      activeRequestController?.abort();
+      if (watchId !== undefined) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [token, user, isOnline, profile?.approval_status]);
 
   const handleToggleDuty = async () => {
     if (!token || updating) return;
@@ -425,6 +558,19 @@ export default function DriverDashboardPage() {
           <div className="p-3.5 rounded-lg border border-red-800/40 bg-red-950/20 text-red-200 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {locationFeedback && (
+          <div className={`p-3.5 rounded-lg border text-xs flex items-center gap-2 ${
+            locationFeedback.type === 'success'
+              ? 'border-emerald-800/40 bg-emerald-950/20 text-emerald-200'
+              : 'border-amber-800/40 bg-amber-950/20 text-amber-200'
+          }`}>
+            <AlertCircle className={`w-4 h-4 flex-shrink-0 ${
+              locationFeedback.type === 'success' ? 'text-emerald-400' : 'text-amber-400'
+            }`} />
+            <span>{locationFeedback.message}</span>
           </div>
         )}
 

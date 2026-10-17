@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createBookingHandler,
   getBookingHandler,
+  getBookingTrackingHandler,
   listBookingsHandler,
   cancelBookingHandler,
   estimateFareHandler,
@@ -37,6 +38,14 @@ router.get(
   authenticateToken,
   requireRole(['RIDER', 'ADMIN']),
   listBookingsHandler
+);
+
+// Protected: Rider live tracking for their own active bookings
+router.get(
+  '/:id/tracking',
+  authenticateToken,
+  requireRole(['RIDER']),
+  getBookingTrackingHandler
 );
 
 // Protected: Booking status & details (Booking.getBookingStatus()) — RIDER or ADMIN ONLY

@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS driver_profiles (
     current_latitude DECIMAL(10, 7) NULL,
     current_longitude DECIMAL(10, 7) NULL,
     location_updated_at TIMESTAMP NULL,
+    location_fix_timestamp_ms BIGINT UNSIGNED NULL,
     rating DECIMAL(3, 2) DEFAULT 5.00,
     is_available BOOLEAN DEFAULT FALSE,
     approval_status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'PENDING',

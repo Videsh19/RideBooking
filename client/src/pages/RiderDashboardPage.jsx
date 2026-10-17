@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin,
   Navigation,
@@ -22,6 +22,7 @@ import {
 import DashboardLayout from '../components/layout/DashboardLayout';
 import Card from '../components/common/Card';
 import LocationSearchInput from '../components/common/LocationSearchInput';
+import LiveRideMap from '../components/common/LiveRideMap';
 import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
 import EmptyState from '../components/common/EmptyState';
@@ -29,25 +30,66 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 import { useAuth } from '../context/AuthContext';
 
 const API_BASE_URL = 'http://localhost:5000/api';
+const TRACKING_POLL_INTERVAL_MS = 8000;
+const TRACKING_REQUEST_TIMEOUT_MS = 15000;
+const ROUTE_GEOMETRY_RETRY_INTERVAL_MS = 60000;
+const LOCATION_FIX_MAX_AGE_MS = 5 * 60 * 1000;
+const LOCATION_FIX_MAX_FUTURE_MS = 30 * 1000;
+
+const isValidCoordinatePair = (latitude, longitude) =>
+  typeof latitude === 'number' &&
+  Number.isFinite(latitude) &&
+  latitude >= -90 &&
+  latitude <= 90 &&
+  typeof longitude === 'number' &&
+  Number.isFinite(longitude) &&
+  longitude >= -180 &&
+  longitude <= 180;
+
+const isValidRouteGeometry = (geometry) =>
+  geometry?.type === 'LineString' &&
+  Array.isArray(geometry.coordinates) &&
+  geometry.coordinates.length >= 2 &&
+  geometry.coordinates.every(
+    (coordinate) =>
+      Array.isArray(coordinate) &&
+      coordinate.length >= 2 &&
+      isValidCoordinatePair(coordinate[1], coordinate[0])
+  );
+
+const getEstimateContextKey = (pickup, dropoff, vehicleTier) =>
+  JSON.stringify([pickup.trim(), dropoff.trim(), vehicleTier]);
+
+const isValidFixTimestamp = (timestamp) =>
+  Number.isSafeInteger(timestamp) &&
+  timestamp > 0 &&
+  timestamp <= Date.now() + LOCATION_FIX_MAX_FUTURE_MS;
+
+const isFreshFixTimestamp = (timestamp) =>
+  isValidFixTimestamp(timestamp) &&
+  timestamp >= Date.now() - LOCATION_FIX_MAX_AGE_MS;
 
 export default function RiderDashboardPage() {
   // Location selection with coordinates and detected territories
   const [pickup, setPickup] = useState('Gateway of India, Colaba');
-  const [pickupCoords, setPickupCoords] = useState({ lat: 18.9220, lng: 72.8347 });
-  const [pickupTerritory, setPickupTerritory] = useState('Mumbai City');
+  const [pickupCoords, setPickupCoords] = useState({ lat: null, lng: null });
+  const [pickupTerritory, setPickupTerritory] = useState('');
   const [pickupError, setPickupError] = useState('');
 
   const [dropoff, setDropoff] = useState('Dadar Western Railway Station');
-  const [destCoords, setDestCoords] = useState({ lat: 19.0180, lng: 72.8444 });
-  const [destTerritory, setDestTerritory] = useState('Mumbai City');
+  const [destCoords, setDestCoords] = useState({ lat: null, lng: null });
+  const [destTerritory, setDestTerritory] = useState('');
   const [destError, setDestError] = useState('');
 
   const [selectedTier, setSelectedTier] = useState('STANDARD');
 
   // Upfront Fare estimation state
   const [estimate, setEstimate] = useState(null);
+  const [estimateContextKey, setEstimateContextKey] = useState(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
   const [estimateError, setEstimateError] = useState(null);
+  const estimateRequestGeneration = useRef(0);
+  const [locationSelectionRevision, setLocationSelectionRevision] = useState(0);
 
   // Booking action state
   const [submitting, setSubmitting] = useState(false);
@@ -58,6 +100,7 @@ export default function RiderDashboardPage() {
   const [bookings, setBookings] = useState([]);
   const [loadingBookings, setLoadingBookings] = useState(true);
   const [cancellingId, setCancellingId] = useState(null);
+  const [trackingByBooking, setTrackingByBooking] = useState({});
 
   // Payment Simulation modal state
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -102,8 +145,38 @@ export default function RiderDashboardPage() {
     },
   ];
 
+  const invalidateEstimate = () => {
+    estimateRequestGeneration.current += 1;
+    setEstimate(null);
+    setEstimateContextKey(null);
+    setEstimateError(null);
+    setEstimateLoading(false);
+  };
+
+  const handlePickupTextChange = (value) => {
+    if (value !== pickup) {
+      invalidateEstimate();
+      setPickupCoords({ lat: null, lng: null });
+      setPickupTerritory('');
+      setPickupError('');
+    }
+    setPickup(value);
+  };
+
+  const handleDropoffTextChange = (value) => {
+    if (value !== dropoff) {
+      invalidateEstimate();
+      setDestCoords({ lat: null, lng: null });
+      setDestTerritory('');
+      setDestError('');
+    }
+    setDropoff(value);
+  };
+
   // Handlers for place selection via autocomplete
   const handleSelectPickup = (place) => {
+    invalidateEstimate();
+    setLocationSelectionRevision((revision) => revision + 1);
     if (!place) {
       setPickupCoords({ lat: null, lng: null });
       setPickupTerritory('');
@@ -117,6 +190,8 @@ export default function RiderDashboardPage() {
   };
 
   const handleSelectDropoff = (place) => {
+    invalidateEstimate();
+    setLocationSelectionRevision((revision) => revision + 1);
     if (!place) {
       setDestCoords({ lat: null, lng: null });
       setDestTerritory('');
@@ -129,23 +204,27 @@ export default function RiderDashboardPage() {
     setDestError('');
   };
 
+  const handleSelectTier = (tier) => {
+    if (tier === selectedTier) return;
+    invalidateEstimate();
+    setSelectedTier(tier);
+  };
+
   // Recalculate distance, duration, and fare whenever pickup, destination, or vehicle tier changes
   useEffect(() => {
     let isMounted = true;
+    const requestGeneration = ++estimateRequestGeneration.current;
+    const isCurrentRequest = () =>
+      isMounted && requestGeneration === estimateRequestGeneration.current;
 
     async function fetchRouteEstimate() {
-      // Require both pickup and destination coordinates or addresses
-      const hasCoords =
-        pickupCoords.lat !== null &&
-        pickupCoords.lng !== null &&
-        destCoords.lat !== null &&
-        destCoords.lng !== null;
-
       const hasText = pickup.trim().length >= 3 && dropoff.trim().length >= 3;
 
-      if (!hasCoords && !hasText) {
+      if (!hasText) {
         setEstimate(null);
+        setEstimateContextKey(null);
         setEstimateError(null);
+        setEstimateLoading(false);
         return;
       }
 
@@ -153,18 +232,24 @@ export default function RiderDashboardPage() {
         setEstimateLoading(true);
         setEstimateError(null);
 
+        const requestBody = {
+          pickupAddress: pickup.trim(),
+          destAddress: dropoff.trim(),
+          vehicleTier: selectedTier,
+        };
+        if (isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng)) {
+          requestBody.pickupLat = pickupCoords.lat;
+          requestBody.pickupLng = pickupCoords.lng;
+        }
+        if (isValidCoordinatePair(destCoords.lat, destCoords.lng)) {
+          requestBody.destLat = destCoords.lat;
+          requestBody.destLng = destCoords.lng;
+        }
+
         const res = await fetch(`${API_BASE_URL}/bookings/estimate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pickupAddress: pickup.trim(),
-            pickupLat: pickupCoords.lat,
-            pickupLng: pickupCoords.lng,
-            destAddress: dropoff.trim(),
-            destLat: destCoords.lat,
-            destLng: destCoords.lng,
-            vehicleTier: selectedTier,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const json = await res.json();
@@ -175,22 +260,42 @@ export default function RiderDashboardPage() {
           );
         }
 
-        if (isMounted && json.success) {
+        const estimatedPickupCoords = json.data?.pickupCoords;
+        const estimatedDestCoords = json.data?.destCoords;
+        if (
+          !json.success ||
+          !isValidCoordinatePair(estimatedPickupCoords?.latitude, estimatedPickupCoords?.longitude) ||
+          !isValidCoordinatePair(estimatedDestCoords?.latitude, estimatedDestCoords?.longitude)
+        ) {
+          throw new Error('Could not verify both pickup and destination locations.');
+        }
+
+        if (isCurrentRequest()) {
           setEstimate(json.data);
-          if (json.data.pickupZone && !pickupTerritory) {
+          setEstimateContextKey(getEstimateContextKey(pickup, dropoff, selectedTier));
+          setPickupCoords({
+            lat: estimatedPickupCoords.latitude,
+            lng: estimatedPickupCoords.longitude,
+          });
+          setDestCoords({
+            lat: estimatedDestCoords.latitude,
+            lng: estimatedDestCoords.longitude,
+          });
+          if (json.data.pickupZone) {
             setPickupTerritory(json.data.pickupZone);
           }
-          if (json.data.destZone && !destTerritory) {
+          if (json.data.destZone) {
             setDestTerritory(json.data.destZone);
           }
         }
       } catch (err) {
-        if (isMounted) {
+        if (isCurrentRequest()) {
           setEstimate(null);
+          setEstimateContextKey(null);
           setEstimateError(err.message);
         }
       } finally {
-        if (isMounted) setEstimateLoading(false);
+        if (isCurrentRequest()) setEstimateLoading(false);
       }
     }
 
@@ -202,17 +307,35 @@ export default function RiderDashboardPage() {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [
-    pickup,
-    pickupCoords.lat,
-    pickupCoords.lng,
-    dropoff,
-    destCoords.lat,
-    destCoords.lng,
-    selectedTier,
-  ]);
+  }, [pickup, dropoff, selectedTier, locationSelectionRevision]);
+
+  const estimateMatchesCurrentContext =
+    Boolean(estimate) &&
+    estimateContextKey === getEstimateContextKey(pickup, dropoff, selectedTier) &&
+    isValidCoordinatePair(estimate?.pickupCoords?.latitude, estimate?.pickupCoords?.longitude) &&
+    isValidCoordinatePair(estimate?.destCoords?.latitude, estimate?.destCoords?.longitude) &&
+    pickupCoords.lat === estimate.pickupCoords.latitude &&
+    pickupCoords.lng === estimate.pickupCoords.longitude &&
+    destCoords.lat === estimate.destCoords.latitude &&
+    destCoords.lng === estimate.destCoords.longitude;
 
   const { token } = useAuth();
+
+  const activeBookings = bookings.filter(
+    (booking) => booking.status === 'CONFIRMED' || booking.status === 'ONGOING'
+  );
+  const trackableBookings = activeBookings.filter(
+    (booking) => booking.driver_id !== null && booking.driver_id !== undefined
+  );
+  const trackingBookingKey = trackableBookings
+    .map((booking) => `${booking.booking_id}:${booking.status}:${booking.driver_id}`)
+    .join('|');
+  const hasRefreshableBookings = bookings.some(
+    (booking) =>
+      booking.status === 'REQUESTED' ||
+      booking.status === 'CONFIRMED' ||
+      booking.status === 'ONGOING'
+  );
 
   // Load real bookings from MySQL
   const loadBookings = async () => {
@@ -241,6 +364,221 @@ export default function RiderDashboardPage() {
     }
   }, [token]);
 
+  useEffect(() => {
+    if (!token || !hasRefreshableBookings) return undefined;
+
+    let isActive = true;
+    let requestInFlight = false;
+    let controller = null;
+
+    const refreshBookings = async () => {
+      if (!isActive || requestInFlight) return;
+
+      requestInFlight = true;
+      controller = new AbortController();
+      try {
+        const res = await fetch(`${API_BASE_URL}/bookings`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success || !Array.isArray(json.data)) {
+          throw new Error(json.error?.message || 'Could not refresh active rides.');
+        }
+        if (isActive) {
+          setBookings(json.data);
+        }
+      } catch (err) {
+        if (isActive && err.name !== 'AbortError') {
+          console.error('Failed to refresh active rides:', err);
+        }
+      } finally {
+        requestInFlight = false;
+        controller = null;
+      }
+    };
+
+    const interval = setInterval(refreshBookings, TRACKING_POLL_INTERVAL_MS);
+    return () => {
+      isActive = false;
+      clearInterval(interval);
+      controller?.abort();
+    };
+  }, [token, hasRefreshableBookings]);
+
+  useEffect(() => {
+    if (!token || trackableBookings.length === 0) return undefined;
+
+    let isActive = true;
+    const requests = new Map();
+    const expiryTimers = new Map();
+    const geometryRequestAt = new Map();
+
+    setTrackingByBooking((current) => {
+      const next = { ...current };
+      trackableBookings.forEach((booking) => {
+        next[booking.booking_id] = {
+          token,
+          driverId: booking.driver_id,
+          phase: 'checking',
+          bookingStatus: booking.status,
+          coordinates: null,
+          fixTimestampMs: null,
+          routeGeometry: null,
+        };
+      });
+      return next;
+    });
+
+    const pollBooking = async (booking) => {
+      const bookingId = booking.booking_id;
+      if (!isActive || requests.has(bookingId)) return;
+
+      const now = Date.now();
+      const lastGeometryRequestAt = geometryRequestAt.get(bookingId);
+      const requestRouteGeometry =
+        lastGeometryRequestAt === undefined ||
+        now - lastGeometryRequestAt >= ROUTE_GEOMETRY_RETRY_INTERVAL_MS;
+      if (requestRouteGeometry) {
+        geometryRequestAt.set(bookingId, now);
+      }
+
+      const controller = new AbortController();
+      requests.set(bookingId, controller);
+      let requestTimedOut = false;
+      const timeout = setTimeout(() => {
+        requestTimedOut = true;
+        controller.abort();
+      }, TRACKING_REQUEST_TIMEOUT_MS);
+
+      try {
+        const trackingUrl = `${API_BASE_URL}/bookings/${bookingId}/tracking${
+          requestRouteGeometry ? '?includeRouteGeometry=true' : ''
+        }`;
+        const res = await fetch(trackingUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success || !json.data) {
+          throw new Error(json.error?.message || 'Could not refresh driver location.');
+        }
+
+        const data = json.data;
+        const hasValidCoordinates = isValidCoordinatePair(data.latitude, data.longitude);
+        const hasValidTimestamp = isValidFixTimestamp(data.fix_timestamp_ms);
+        const fixIsFresh = hasValidTimestamp && isFreshFixTimestamp(data.fix_timestamp_ms);
+        const available =
+          data.available === true &&
+          data.fresh === true &&
+          hasValidCoordinates &&
+          fixIsFresh;
+        const fixTimestampMs = hasValidTimestamp ? data.fix_timestamp_ms : null;
+
+        if (!isActive) return;
+        clearTimeout(expiryTimers.get(bookingId));
+        expiryTimers.delete(bookingId);
+
+        setTrackingByBooking((current) => ({
+          ...current,
+          [bookingId]: {
+            token,
+            driverId: booking.driver_id,
+            phase: available
+              ? 'available'
+              : hasValidTimestamp && !fixIsFresh
+                ? 'stale'
+                : 'unavailable',
+            bookingStatus: booking.status,
+            coordinates: available
+              ? { latitude: data.latitude, longitude: data.longitude }
+              : null,
+            fixTimestampMs,
+            routeGeometry: isValidRouteGeometry(data.route_geometry)
+              ? data.route_geometry
+              : current[bookingId]?.token === token &&
+                  current[bookingId]?.driverId === booking.driver_id
+                ? current[bookingId].routeGeometry
+                : null,
+          },
+        }));
+
+        if (available) {
+          const expiryDelay = Math.max(
+            0,
+            fixTimestampMs + LOCATION_FIX_MAX_AGE_MS - Date.now() + 1
+          );
+          const expiryTimer = setTimeout(() => {
+            if (!isActive) return;
+            setTrackingByBooking((current) => {
+              const tracked = current[bookingId];
+              if (
+                tracked?.token !== token ||
+                tracked.driverId !== booking.driver_id ||
+                tracked.fixTimestampMs !== fixTimestampMs
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                [bookingId]: {
+                  ...tracked,
+                  phase: 'stale',
+                  coordinates: null,
+                },
+              };
+            });
+            expiryTimers.delete(bookingId);
+          }, expiryDelay);
+          expiryTimers.set(bookingId, expiryTimer);
+        }
+      } catch (err) {
+        if (!isActive || (err.name === 'AbortError' && !requestTimedOut)) return;
+        clearTimeout(expiryTimers.get(bookingId));
+        expiryTimers.delete(bookingId);
+        setTrackingByBooking((current) => {
+          const previous = current[bookingId];
+          return {
+            ...current,
+            [bookingId]: {
+              token,
+              driverId: booking.driver_id,
+              phase: 'error',
+              bookingStatus: booking.status,
+              coordinates: null,
+              fixTimestampMs: null,
+              routeGeometry:
+                previous?.token === token &&
+                previous.driverId === booking.driver_id
+                  ? previous.routeGeometry
+                  : null,
+            },
+          };
+        });
+      } finally {
+        clearTimeout(timeout);
+        if (requests.get(bookingId) === controller) {
+          requests.delete(bookingId);
+        }
+      }
+    };
+
+    const pollAllBookings = () => {
+      trackableBookings.forEach((booking) => {
+        pollBooking(booking);
+      });
+    };
+
+    pollAllBookings();
+    const interval = setInterval(pollAllBookings, TRACKING_POLL_INTERVAL_MS);
+    return () => {
+      isActive = false;
+      clearInterval(interval);
+      requests.forEach((controller) => controller.abort());
+      expiryTimers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [token, trackingBookingKey]);
+
   // Submit Booking (Booking.bookRide())
   const handleRequestRide = async (e) => {
     e.preventDefault();
@@ -249,6 +587,10 @@ export default function RiderDashboardPage() {
 
     if (!pickup.trim() || !dropoff.trim()) {
       setBookingError('Please enter valid pickup and destination locations.');
+      return;
+    }
+    if (!estimateMatchesCurrentContext) {
+      setBookingError('Please select or verify both pickup and destination locations before booking.');
       return;
     }
 
@@ -262,11 +604,11 @@ export default function RiderDashboardPage() {
         },
         body: JSON.stringify({
           pickupAddress: pickup.trim(),
-          pickupLat: pickupCoords.lat,
-          pickupLng: pickupCoords.lng,
+          pickupLat: estimate.pickupCoords.latitude,
+          pickupLng: estimate.pickupCoords.longitude,
           destAddress: dropoff.trim(),
-          destLat: destCoords.lat,
-          destLng: destCoords.lng,
+          destLat: estimate.destCoords.latitude,
+          destLng: estimate.destCoords.longitude,
           vehicleTier: selectedTier,
         }),
       });
@@ -483,7 +825,7 @@ export default function RiderDashboardPage() {
                   icon={MapPin}
                   placeholder="Search landmark, building or street in Mumbai MMR..."
                   value={pickup}
-                  onChangeText={setPickup}
+                  onChangeText={handlePickupTextChange}
                   onSelectPlace={handleSelectPickup}
                   selectedTerritory={pickupTerritory}
                   selectedCoords={pickupCoords}
@@ -498,7 +840,7 @@ export default function RiderDashboardPage() {
                   icon={Navigation}
                   placeholder="Search destination place, station or hub..."
                   value={dropoff}
-                  onChangeText={setDropoff}
+                  onChangeText={handleDropoffTextChange}
                   onSelectPlace={handleSelectDropoff}
                   selectedTerritory={destTerritory}
                   selectedCoords={destCoords}
@@ -518,7 +860,7 @@ export default function RiderDashboardPage() {
                       return (
                         <div
                           key={tier.id}
-                          onClick={() => setSelectedTier(tier.id)}
+                          onClick={() => handleSelectTier(tier.id)}
                           className={`p-3 rounded-lg border cursor-pointer transition-all duration-150 ${isSelected
                               ? 'border-theme-primary bg-theme-surface'
                               : 'border-theme-border hover:border-theme-border hover:bg-theme-surface/50'
@@ -604,7 +946,12 @@ export default function RiderDashboardPage() {
                   size="md"
                   className="w-full"
                   id="request-ride-btn"
-                  disabled={submitting || estimateLoading || Boolean(estimateError)}
+                  disabled={
+                    submitting ||
+                    estimateLoading ||
+                    Boolean(estimateError) ||
+                    !estimateMatchesCurrentContext
+                  }
                 >
                   {submitting ? (
                     <LoadingSpinner size="sm" label="Creating Booking in MySQL..." />
@@ -618,45 +965,129 @@ export default function RiderDashboardPage() {
 
           {/* Right Column: Route Map Preview & Trips Ledger */}
           <div className="lg:col-span-7 space-y-6">
-            {/* Route Map Preview */}
+            {/* Live Driver Tracking */}
             <Card
-              title="Transit Route Visual Area"
-              subtitle="Geographic route calculation and territory boundaries"
+              title="Live Ride Tracking"
+              subtitle="Assigned driver locations for your confirmed and ongoing rides"
               padding="p-0 overflow-hidden"
             >
-              <div className="h-64 w-full bg-theme-surface/40 flex flex-col items-center justify-center p-6 text-center border-b border-theme-border relative">
-                <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#8B5CF6_1px,transparent_1px)] [background-size:16px_16px]" />
+              {activeBookings.length > 0 ? (
+                <div className="divide-y divide-theme-border">
+                  {activeBookings.map((booking) => {
+                    const tracking = trackingByBooking[booking.booking_id];
+                    const trackingMatchesBooking =
+                      tracking?.token === token &&
+                      tracking.driverId === booking.driver_id &&
+                      tracking.bookingStatus === booking.status;
+                    const fixTimestampMs = trackingMatchesBooking
+                      ? tracking.fixTimestampMs
+                      : null;
+                    const hasValidLastUpdate = isValidFixTimestamp(fixTimestampMs);
+                    const locationIsFresh =
+                      trackingMatchesBooking &&
+                      tracking.phase === 'available' &&
+                      isFreshFixTimestamp(fixTimestampMs) &&
+                      isValidCoordinatePair(
+                        tracking.coordinates?.latitude,
+                        tracking.coordinates?.longitude
+                      );
+                    const lastUpdated = hasValidLastUpdate
+                      ? new Date(fixTimestampMs).toLocaleTimeString()
+                      : null;
 
-                <div className="relative z-10 max-w-md space-y-2.5">
-                  <div className="w-10 h-10 rounded-xl bg-theme-card border border-theme-border flex items-center justify-center text-theme-primary mx-auto shadow-sm">
-                    <Navigation className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-theme-text">
-                      Real Road Route Calculation
-                    </h4>
-                    <p className="text-xs text-theme-text-secondary mt-0.5 leading-relaxed truncate max-w-sm mx-auto">
-                      {pickup && dropoff
-                        ? `${pickup} ➔ ${dropoff}`
-                        : 'Select pickup and destination to view trajectory'}
-                    </p>
-                  </div>
+                    let trackingMessage = 'Checking driver location…';
+                    if (booking.driver_id === null || booking.driver_id === undefined) {
+                      trackingMessage = 'No driver is assigned yet. Live location will appear after assignment.';
+                    } else if (trackingMatchesBooking && tracking.phase === 'error') {
+                      trackingMessage = 'Unable to refresh driver location. The marker is hidden; retrying.';
+                    } else if (trackingMatchesBooking && tracking.phase === 'stale') {
+                      trackingMessage = 'Driver location is stale. The marker is hidden.';
+                    } else if (
+                      trackingMatchesBooking &&
+                      tracking.phase === 'available' &&
+                      !locationIsFresh
+                    ) {
+                      trackingMessage = 'Driver location is no longer fresh. The marker is hidden.';
+                    } else if (trackingMatchesBooking && tracking.phase === 'unavailable') {
+                      trackingMessage = 'Driver location is unavailable or stale.';
+                    } else if (locationIsFresh && lastUpdated) {
+                      trackingMessage = `Fresh driver location · Updated ${lastUpdated}`;
+                    }
 
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <Badge variant="purple" size="sm">
-                      {estimate ? `${estimate.distanceKm} km Road Route` : 'Road Routing: Ready'}
-                    </Badge>
-                    {estimate && (
-                      <Badge variant="info" size="sm">
-                        ~{estimate.estimatedDurationMin} mins Travel Time
+                    return (
+                      <div key={booking.booking_id} className="space-y-3 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-theme-text truncate">
+                              {booking.pickup_address} → {booking.dest_address}
+                            </p>
+                            <p className="text-[11px] text-theme-text-secondary mt-0.5">
+                              Ride #{booking.booking_id}
+                              {booking.driver_name ? ` · Driver ${booking.driver_name}` : ''}
+                            </p>
+                          </div>
+                          <Badge variant={getStatusBadgeVariant(booking.status)} size="sm">
+                            {booking.status}
+                          </Badge>
+                        </div>
+
+                        <p className={`text-[11px] ${
+                          locationIsFresh ? 'text-emerald-400' : 'text-theme-text-secondary'
+                        }`}>
+                          {trackingMessage}
+                          {!locationIsFresh && lastUpdated && (
+                            <span> Last fix: {lastUpdated}.</span>
+                          )}
+                        </p>
+
+                        {booking.driver_id !== null && booking.driver_id !== undefined && (
+                          <LiveRideMap
+                            driverCoordinates={
+                              locationIsFresh ? tracking.coordinates : null
+                            }
+                            routeGeometry={
+                              trackingMatchesBooking &&
+                              isValidRouteGeometry(tracking.routeGeometry)
+                                ? tracking.routeGeometry
+                                : null
+                            }
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="h-64 w-full bg-theme-surface/40 flex flex-col items-center justify-center p-6 text-center border-b border-theme-border relative">
+                  <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#8B5CF6_1px,transparent_1px)] [background-size:16px_16px]" />
+                  <div className="relative z-10 max-w-md space-y-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-theme-card border border-theme-border flex items-center justify-center text-theme-primary mx-auto shadow-sm">
+                      <Navigation className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-theme-text">
+                        No active rides to track
+                      </h4>
+                      <p className="text-xs text-theme-text-secondary mt-0.5 leading-relaxed">
+                        An assigned driver&apos;s fresh location will appear here after a ride is confirmed.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <Badge variant="purple" size="sm">
+                        {estimate ? `${estimate.distanceKm} km Road Route` : 'Road Routing: Ready'}
                       </Badge>
-                    )}
-                    <Badge variant="neutral" size="sm">
-                      Coverage: 6 MMR Zones
-                    </Badge>
+                      {estimate && (
+                        <Badge variant="info" size="sm">
+                          ~{estimate.estimatedDurationMin} mins Travel Time
+                        </Badge>
+                      )}
+                      <Badge variant="neutral" size="sm">
+                        Coverage: 6 MMR Zones
+                      </Badge>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <div className="p-3.5 grid grid-cols-2 gap-3 text-xs bg-theme-card">
                 <div className="p-2.5 rounded-lg border border-theme-border bg-theme-surface/30">

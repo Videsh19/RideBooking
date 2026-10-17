@@ -183,6 +183,10 @@ export async function runMigrations() {
     if (locUpdCol.length === 0) {
       await connection.query("ALTER TABLE driver_profiles ADD COLUMN location_updated_at TIMESTAMP NULL AFTER current_longitude");
     }
+    const [locFixTimestampCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'location_fix_timestamp_ms'");
+    if (locFixTimestampCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN location_fix_timestamp_ms BIGINT UNSIGNED NULL AFTER location_updated_at");
+    }
 
     // Phase 4.5: cancellation_fee column on bookings table (REQ-027)
     const [cancelFeeCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'cancellation_fee'");
