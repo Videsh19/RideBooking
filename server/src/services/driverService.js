@@ -209,20 +209,7 @@ export async function acceptBooking(userId, bookingId) {
     };
   }
 
-  // 1. Check if driver already has an active ride in CONFIRMED or ONGOING status
   const pool = getDbPool();
-  const [activeCheck] = await pool.query(
-    `SELECT booking_id FROM bookings WHERE driver_id = ? AND status IN ('CONFIRMED', 'ONGOING') LIMIT 1`,
-    [profile.driver_id]
-  );
-  if (activeCheck.length > 0) {
-    throw {
-      statusCode: 400,
-      code: 'ACTIVE_RIDE_EXISTS',
-      message: 'You already have an active ride assignment. Please complete it before accepting another.',
-    };
-  }
-
   const connection = await pool.getConnection();
 
   try {
@@ -247,10 +234,48 @@ export async function acceptBooking(userId, bookingId) {
       };
     }
 
+    // Serialize assignments for this driver by locking the driver profile row.
+    const [lockedDrivers] = await connection.query(
+      `SELECT driver_id, approval_status, is_available, vehicle_approval_status,
+              is_vehicle_active, vehicle_category
+       FROM driver_profiles
+       WHERE driver_id = ?
+       FOR UPDATE`,
+      [profile.driver_id]
+    );
+
+    const lockedDriver = lockedDrivers[0];
+    if (
+      !lockedDriver ||
+      lockedDriver.approval_status !== 'APPROVED' ||
+      !lockedDriver.is_available ||
+      lockedDriver.vehicle_approval_status !== 'APPROVED' ||
+      !lockedDriver.is_vehicle_active
+    ) {
+      throw {
+        statusCode: 409,
+        code: 'DRIVER_UNAVAILABLE',
+        message: 'Driver or vehicle is no longer eligible to accept this ride.',
+      };
+    }
+
+    const [activeCheck] = await connection.query(
+      `SELECT booking_id FROM bookings
+       WHERE driver_id = ? AND status IN ('CONFIRMED', 'ONGOING')
+       LIMIT 1`,
+      [profile.driver_id]
+    );
+    if (activeCheck.length > 0) {
+      throw {
+        statusCode: 409,
+        code: 'ACTIVE_RIDE_EXISTS',
+        message: 'You already have an active ride assignment.',
+      };
+    }
     // Category compatibility enforcement: driver vehicle_category must match booking vehicle_tier
     if (
-      !profile.vehicle_category ||
-      profile.vehicle_category.toUpperCase() !== String(targetRows[0].vehicle_tier).toUpperCase()
+      !lockedDriver.vehicle_category ||
+      lockedDriver.vehicle_category.toUpperCase() !== String(targetRows[0].vehicle_tier).toUpperCase()
     ) {
       await connection.rollback();
       throw {
