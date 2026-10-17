@@ -1,5 +1,23 @@
 import { getDbPool } from '../config/db.js';
 
+export function validateRating(rating) {
+  if (
+    typeof rating !== 'number' ||
+    !Number.isFinite(rating) ||
+    !Number.isInteger(rating) ||
+    rating < 1 ||
+    rating > 5
+  ) {
+    throw {
+      statusCode: 400,
+      code: 'INVALID_RATING_VALUE',
+      message: 'Rating must be an integer between 1 and 5 stars.',
+    };
+  }
+
+  return rating;
+}
+
 /**
  * Submit post-trip star rating and optional written review
  * Derived from SRS Section 3: "Rating and Review Screen: Star Ratings (1–5), Submit Written Reviews"
@@ -16,14 +34,7 @@ export async function submitRating({
     throw { statusCode: 400, code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' };
   }
 
-  const parsedRating = parseInt(rating, 10);
-  if (isNaN(parsedRating) || parsedRating < 1 || parsedRating > 5) {
-    throw {
-      statusCode: 400,
-      code: 'INVALID_RATING_VALUE',
-      message: 'Rating must be an integer between 1 and 5 stars.',
-    };
-  }
+  const parsedRating = validateRating(rating);
 
   const cleanComments = typeof comments === 'string' ? comments.trim() : null;
   if (cleanComments && cleanComments.length > 500) {
