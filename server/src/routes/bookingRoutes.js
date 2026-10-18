@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createBookingHandler,
   getBookingHandler,
+  getBookingTrackingHandler,
   listBookingsHandler,
   cancelBookingHandler,
   estimateFareHandler,
@@ -12,6 +13,7 @@ import { validateRequiredFields } from '../middleware/validateRequest.js';
 import * as paymentService from '../services/paymentService.js';
 import * as ratingService from '../services/ratingService.js';
 import * as driverService from '../services/driverService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 const router = Router();
 
@@ -37,6 +39,14 @@ router.get(
   authenticateToken,
   requireRole(['RIDER', 'ADMIN']),
   listBookingsHandler
+);
+
+// Protected: Rider live tracking for their own active bookings
+router.get(
+  '/:id/tracking',
+  authenticateToken,
+  requireRole(['RIDER']),
+  getBookingTrackingHandler
 );
 
 // Protected: Booking status & details (Booking.getBookingStatus()) — RIDER or ADMIN ONLY
@@ -68,14 +78,14 @@ router.post(
   requireRole(['RIDER', 'ADMIN']),
   async (req, res, next) => {
     try {
-      const bookingId = parseInt(req.params.id, 10);
-      if (isNaN(bookingId)) {
+      const bookingId = parsePositiveIntegerId(req.params.id);
+      if (bookingId === null) {
         return res.status(400).json({
           success: false,
-          error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+          error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
         });
       }
-      const result = await driverService.assignNearestDriver(bookingId);
+      const result = await driverService.assignNearestDriver(bookingId, req.user);
       res.status(200).json({
         success: true,
         data: result,
@@ -99,7 +109,7 @@ router.post(
         userId: req.user.user_id,
         bookingId: req.params.id,
         paymentMethod,
-        simulateFailure: Boolean(simulateFailure),
+        simulateFailure: simulateFailure === true,
       });
 
       res.status(201).json({

@@ -3,6 +3,9 @@ import { getDbPool } from '../config/db.js';
 import { getBookingById } from './bookingService.js';
 import { UPLOADS_DIR } from '../middleware/uploadMiddleware.js';
 
+const LOCATION_FIX_MAX_AGE_MS = 5 * 60 * 1000;
+const LOCATION_FIX_MAX_FUTURE_MS = 30 * 1000;
+
 /**
  * Haversine distance calculation between two (lat, lon) coordinates in kilometers
  */
@@ -20,9 +23,9 @@ export function calculateHaversineKm(lat1, lon1, lat2, lon2) {
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos((numLat1 * Math.PI) / 180) *
-      Math.cos((numLat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos((numLat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Number((R * c).toFixed(2));
 }
@@ -35,6 +38,7 @@ export async function getDriverProfile(userId) {
   const [rows] = await pool.query(
     `SELECT d.driver_id, d.user_id, u.name, u.email, u.phone_no,
             d.license_no, d.vehicle_no, d.vehicle_model, d.vehicle_category,
+            d.vehicle_color, d.passenger_capacity, d.vehicle_approval_status, d.is_vehicle_active,
             d.license_doc_path, d.vehicle_doc_path,
             d.current_latitude, d.current_longitude, d.location_updated_at,
             d.rating, d.is_available, d.approval_status, d.created_at
@@ -55,6 +59,14 @@ export async function getDriverProfile(userId) {
  * Update driver availability duty status
  */
 export async function setDriverDuty(userId, isAvailable) {
+  if (typeof isAvailable !== 'boolean') {
+    throw {
+      statusCode: 400,
+      code: 'INVALID_DUTY_STATUS',
+      message: 'isAvailable must be a boolean.',
+    };
+  }
+
   const profile = await getDriverProfile(userId);
 
   if (profile.approval_status !== 'APPROVED') {
@@ -66,6 +78,14 @@ export async function setDriverDuty(userId, isAvailable) {
   }
 
   const availableBool = Boolean(isAvailable);
+  if (availableBool && (profile.vehicle_approval_status !== 'APPROVED' || !profile.is_vehicle_active)) {
+    throw {
+      statusCode: 403,
+      code: 'VEHICLE_NOT_ACTIVE',
+      message: 'Cannot toggle duty status. Your assigned vehicle is either pending approval or deactivated by administration.',
+    };
+  }
+
   const pool = getDbPool();
   await pool.query(
     'UPDATE driver_profiles SET is_available = ? WHERE user_id = ?',
@@ -82,6 +102,11 @@ export async function getAvailableDispatchQueue(userId) {
   const profile = await getDriverProfile(userId);
 
   if (profile.approval_status !== 'APPROVED' || !profile.is_available) {
+    return [];
+  }
+
+  // Ensure unapproved or inactive vehicles cannot receive assignments
+  if (profile.vehicle_approval_status !== 'APPROVED' || !profile.is_vehicle_active) {
     return [];
   }
 
@@ -103,7 +128,7 @@ export async function getAvailableDispatchQueue(userId) {
 
   // Retrieve unassigned bookings in REQUESTED status matching driver's vehicle category
   const [rows] = await pool.query(
-    `SELECT 
+    `SELECT
        b.booking_id,
        b.user_id,
        u.name AS passenger_name,
@@ -187,20 +212,15 @@ export async function acceptBooking(userId, bookingId) {
     };
   }
 
-  // 1. Check if driver already has an active ride in CONFIRMED or ONGOING status
-  const pool = getDbPool();
-  const [activeCheck] = await pool.query(
-    `SELECT booking_id FROM bookings WHERE driver_id = ? AND status IN ('CONFIRMED', 'ONGOING') LIMIT 1`,
-    [profile.driver_id]
-  );
-  if (activeCheck.length > 0) {
+  if (profile.vehicle_approval_status !== 'APPROVED' || !profile.is_vehicle_active) {
     throw {
-      statusCode: 400,
-      code: 'ACTIVE_RIDE_EXISTS',
-      message: 'You already have an active ride assignment. Please complete it before accepting another.',
+      statusCode: 403,
+      code: 'VEHICLE_NOT_ACTIVE',
+      message: 'Cannot accept ride offer. Your vehicle is either pending approval or deactivated by administration.',
     };
   }
 
+  const pool = getDbPool();
   const connection = await pool.getConnection();
 
   try {
@@ -225,10 +245,48 @@ export async function acceptBooking(userId, bookingId) {
       };
     }
 
+    // Serialize assignments for this driver by locking the driver profile row.
+    const [lockedDrivers] = await connection.query(
+      `SELECT driver_id, approval_status, is_available, vehicle_approval_status,
+              is_vehicle_active, vehicle_category
+       FROM driver_profiles
+       WHERE driver_id = ?
+       FOR UPDATE`,
+      [profile.driver_id]
+    );
+
+    const lockedDriver = lockedDrivers[0];
+    if (
+      !lockedDriver ||
+      lockedDriver.approval_status !== 'APPROVED' ||
+      !lockedDriver.is_available ||
+      lockedDriver.vehicle_approval_status !== 'APPROVED' ||
+      !lockedDriver.is_vehicle_active
+    ) {
+      throw {
+        statusCode: 409,
+        code: 'DRIVER_UNAVAILABLE',
+        message: 'Driver or vehicle is no longer eligible to accept this ride.',
+      };
+    }
+
+    const [activeCheck] = await connection.query(
+      `SELECT booking_id FROM bookings
+       WHERE driver_id = ? AND status IN ('CONFIRMED', 'ONGOING')
+       LIMIT 1`,
+      [profile.driver_id]
+    );
+    if (activeCheck.length > 0) {
+      throw {
+        statusCode: 409,
+        code: 'ACTIVE_RIDE_EXISTS',
+        message: 'You already have an active ride assignment.',
+      };
+    }
     // Category compatibility enforcement: driver vehicle_category must match booking vehicle_tier
     if (
-      !profile.vehicle_category ||
-      profile.vehicle_category.toUpperCase() !== String(targetRows[0].vehicle_tier).toUpperCase()
+      !lockedDriver.vehicle_category ||
+      lockedDriver.vehicle_category.toUpperCase() !== String(targetRows[0].vehicle_tier).toUpperCase()
     ) {
       await connection.rollback();
       throw {
@@ -240,7 +298,7 @@ export async function acceptBooking(userId, bookingId) {
 
     // 3. Assign driver and transition status to CONFIRMED
     await connection.query(
-      `UPDATE bookings 
+      `UPDATE bookings
        SET driver_id = ?, status = 'CONFIRMED', updated_at = NOW()
        WHERE booking_id = ?`,
       [profile.driver_id, bookingId]
@@ -329,10 +387,20 @@ export async function startRide(userId, bookingId) {
   }
 
   const pool = getDbPool();
-  await pool.query(
-    `UPDATE bookings SET status = 'ONGOING', updated_at = NOW() WHERE booking_id = ?`,
-    [bookingId]
+  const [result] = await pool.query(
+    `UPDATE bookings
+     SET status = 'ONGOING', updated_at = NOW()
+     WHERE booking_id = ? AND status = 'CONFIRMED' AND driver_id = ?`,
+    [bookingId, profile.driver_id]
   );
+
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'RIDE_STATUS_CONFLICT',
+      message: 'Ride status or driver assignment changed before the ride could be started.',
+    };
+  }
 
   return await getBookingById(bookingId);
 }
@@ -361,10 +429,20 @@ export async function completeRide(userId, bookingId) {
   }
 
   const pool = getDbPool();
-  await pool.query(
-    `UPDATE bookings SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW() WHERE booking_id = ?`,
-    [bookingId]
+  const [result] = await pool.query(
+    `UPDATE bookings
+     SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW()
+     WHERE booking_id = ? AND status = 'ONGOING' AND driver_id = ?`,
+    [bookingId, profile.driver_id]
   );
+
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'RIDE_STATUS_CONFLICT',
+      message: 'Ride status or driver assignment changed before the ride could be completed.',
+    };
+  }
 
   return await getBookingById(bookingId);
 }
@@ -377,7 +455,7 @@ export async function getDriverHistoryAndEarnings(userId) {
   const pool = getDbPool();
 
   const [trips] = await pool.query(
-    `SELECT 
+    `SELECT
        b.booking_id,
        b.pickup_address,
        b.dest_address,
@@ -387,6 +465,10 @@ export async function getDriverHistoryAndEarnings(userId) {
        b.status,
        b.payment_status,
        b.total_fare,
+       cash_pay.payment_method,
+       cash_pay.cash_collection_status,
+       cash_pay.cash_collected_at,
+       cash_pay.cash_collected_by_driver_id,
        b.booking_date,
        COALESCE(b.completed_at, b.updated_at) AS completed_at,
        b.updated_at,
@@ -397,6 +479,20 @@ export async function getDriverHistoryAndEarnings(userId) {
      FROM bookings b
      JOIN users u ON b.user_id = u.user_id
      LEFT JOIN routes r ON b.route_id = r.route_id
+     LEFT JOIN payments cash_pay
+       ON cash_pay.payment_id = (
+         SELECT cash_payment.payment_id
+         FROM payments cash_payment
+         WHERE cash_payment.booking_id = b.booking_id
+           AND cash_payment.payment_method = 'Cash'
+         ORDER BY (
+                    cash_payment.cash_collection_status = 'OUTSTANDING'
+                    OR cash_payment.cash_collection_status IS NULL
+                  ) DESC,
+                  cash_payment.payment_date DESC,
+                  cash_payment.payment_id DESC
+         LIMIT 1
+       )
      WHERE b.driver_id = ? AND b.status = 'COMPLETED'
      ORDER BY COALESCE(b.completed_at, b.updated_at) DESC`,
     [profile.driver_id]
@@ -440,7 +536,11 @@ export async function getPendingDriverApplications() {
 export async function approveDriverApplication(driverId) {
   const pool = getDbPool();
   const [res] = await pool.query(
-    `UPDATE driver_profiles SET approval_status = 'APPROVED' WHERE driver_id = ?`,
+    `UPDATE driver_profiles
+     SET approval_status = 'APPROVED',
+         vehicle_approval_status = 'APPROVED',
+         is_vehicle_active = TRUE
+     WHERE driver_id = ?`,
     [driverId]
   );
 
@@ -449,7 +549,7 @@ export async function approveDriverApplication(driverId) {
   }
 
   const [rows] = await pool.query(
-    `SELECT d.driver_id, d.user_id, u.name, u.email, d.approval_status
+    `SELECT d.driver_id, d.user_id, u.name, u.email, d.approval_status, d.vehicle_approval_status, d.is_vehicle_active
      FROM driver_profiles d
      JOIN users u ON d.user_id = u.user_id
      WHERE d.driver_id = ?`,
@@ -465,7 +565,11 @@ export async function approveDriverApplication(driverId) {
 export async function rejectDriverApplication(driverId, reason = 'Application rejected by administration') {
   const pool = getDbPool();
   const [res] = await pool.query(
-    `UPDATE driver_profiles SET approval_status = 'REJECTED' WHERE driver_id = ?`,
+    `UPDATE driver_profiles
+     SET approval_status = 'REJECTED',
+         vehicle_approval_status = 'REJECTED',
+         is_available = FALSE
+     WHERE driver_id = ?`,
     [driverId]
   );
 
@@ -474,7 +578,7 @@ export async function rejectDriverApplication(driverId, reason = 'Application re
   }
 
   const [rows] = await pool.query(
-    `SELECT d.driver_id, d.user_id, u.name, u.email, d.approval_status
+    `SELECT d.driver_id, d.user_id, u.name, u.email, d.approval_status, d.vehicle_approval_status
      FROM driver_profiles d
      JOIN users u ON d.user_id = u.user_id
      WHERE d.driver_id = ?`,
@@ -485,9 +589,165 @@ export async function rejectDriverApplication(driverId, reason = 'Application re
 }
 
 /**
+ * Administrator: Update vehicle approval and activation status
+ */
+
+export async function updateVehicleStatus(
+  driverId,
+  { vehicleApprovalStatus, isVehicleActive }
+) {
+  const pool = getDbPool();
+  const updates = [];
+  const params = [];
+
+  if (vehicleApprovalStatus !== undefined) {
+    if (typeof vehicleApprovalStatus !== 'string') {
+      throw {
+        statusCode: 400,
+        code: 'INVALID_VEHICLE_STATUS',
+        message: 'Vehicle status must be a string.',
+      };
+    }
+
+    const cleanStatus = vehicleApprovalStatus.toUpperCase();
+
+    if (!['PENDING', 'APPROVED', 'REJECTED'].includes(cleanStatus)) {
+      throw {
+        statusCode: 400,
+        code: 'INVALID_VEHICLE_STATUS',
+        message: "Vehicle status must be 'PENDING', 'APPROVED', or 'REJECTED'.",
+      };
+    }
+
+    updates.push('vehicle_approval_status = ?');
+    params.push(cleanStatus);
+
+    if (cleanStatus !== 'APPROVED') {
+      updates.push('is_available = FALSE');
+    }
+  }
+
+  if (isVehicleActive !== undefined) {
+    if (typeof isVehicleActive !== 'boolean') {
+      throw {
+        statusCode: 400,
+        code: 'INVALID_VEHICLE_ACTIVE',
+        message: 'isVehicleActive must be a boolean.',
+      };
+    }
+
+    updates.push('is_vehicle_active = ?');
+    params.push(isVehicleActive);
+
+    if (!isVehicleActive) {
+      updates.push('is_available = FALSE');
+    }
+  }
+
+  if (updates.length === 0) {
+    throw {
+      statusCode: 400,
+      code: 'NO_UPDATES',
+      message: 'No vehicle status or activation changes provided.',
+    };
+  }
+
+  params.push(driverId);
+
+  const [res] = await pool.query(
+    `UPDATE driver_profiles
+     SET ${updates.join(', ')}
+     WHERE driver_id = ?`,
+    params
+  );
+
+  if (res.affectedRows === 0) {
+    const [existing] = await pool.query(
+      'SELECT driver_id FROM driver_profiles WHERE driver_id = ?',
+      [driverId]
+    );
+
+    if (existing.length === 0) {
+      throw {
+        statusCode: 404,
+        code: 'DRIVER_NOT_FOUND',
+        message: `Driver ID ${driverId} not found.`,
+      };
+    }
+  }
+
+  const [rows] = await pool.query(
+    `SELECT d.driver_id, d.user_id, u.name AS driver_name,
+            u.phone_no AS driver_phone, d.license_no, d.vehicle_no,
+            d.vehicle_model, d.vehicle_category, d.vehicle_color,
+            d.passenger_capacity, d.vehicle_approval_status,
+            d.is_vehicle_active, d.approval_status, d.is_available
+     FROM driver_profiles d
+     JOIN users u ON d.user_id = u.user_id
+     WHERE d.driver_id = ?`,
+    [driverId]
+  );
+
+  return rows[0];
+}
+
+
+/**
+ * Administrator: Retrieve all fleet vehicles
+ */
+export async function getAllFleetVehicles() {
+  const pool = getDbPool();
+  const [rows] = await pool.query(
+    `SELECT d.driver_id, d.user_id, u.name AS driver_name, u.phone_no AS driver_phone,
+            d.license_no, d.vehicle_no, d.vehicle_model, d.vehicle_category,
+            d.vehicle_color, d.passenger_capacity,
+            d.vehicle_approval_status, d.is_vehicle_active,
+            d.approval_status, d.is_available, d.rating,
+            (SELECT COUNT(*) FROM bookings b WHERE b.driver_id = d.driver_id AND b.status IN ('CONFIRMED', 'ONGOING')) AS active_rides_count,
+            d.created_at
+     FROM driver_profiles d
+     JOIN users u ON d.user_id = u.user_id
+     ORDER BY d.created_at DESC`
+  );
+  return rows;
+}
+
+/**
+ * Record a dispatch failure into MySQL
+ */
+export async function recordDispatchFailure(bookingId, reason) {
+  const pool = getDbPool();
+  const [res] = await pool.query(
+    `INSERT INTO dispatch_failures (booking_id, reason) VALUES (?, ?)`,
+    [bookingId, String(reason || 'No available or compatible driver')]
+  );
+  return { failure_id: res.insertId, booking_id: bookingId, reason };
+}
+
+/**
+ * Administrator: List recent dispatch failures
+ */
+export async function getDispatchFailures(limit = 50) {
+  const pool = getDbPool();
+  const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+  const [rows] = await pool.query(
+    `SELECT df.failure_id, df.booking_id, df.reason, df.failed_at,
+            b.pickup_address, b.dest_address, b.vehicle_tier, b.total_fare, b.status AS booking_status,
+            u.name AS passenger_name, u.phone_no AS passenger_phone
+     FROM dispatch_failures df
+     JOIN bookings b ON df.booking_id = b.booking_id
+     JOIN users u ON b.user_id = u.user_id
+     ORDER BY df.failed_at DESC
+     LIMIT ?`,
+    [parsedLimit]
+  );
+  return rows;
+}
+
+/**
  * Update driver geographic location coordinates (REQ-022)
  */
-export async function updateDriverLocation(userId, { latitude, longitude }) {
+export async function updateDriverLocation(userId, { latitude, longitude, fixTimestampMs }) {
   const profile = await getDriverProfile(userId);
   if (profile.approval_status !== 'APPROVED') {
     throw {
@@ -497,27 +757,73 @@ export async function updateDriverLocation(userId, { latitude, longitude }) {
     };
   }
 
-  const numLat = parseFloat(latitude);
-  const numLon = parseFloat(longitude);
-  if (isNaN(numLat) || isNaN(numLon) || numLat < -90 || numLat > 90 || numLon < -180 || numLon > 180) {
+  if (
+    typeof latitude !== 'number' ||
+    !Number.isFinite(latitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    typeof longitude !== 'number' ||
+    !Number.isFinite(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
     throw {
       statusCode: 400,
       code: 'INVALID_COORDINATES',
-      message: 'Valid numeric latitude [-90, 90] and longitude [-180, 180] are required.',
+      message: 'Latitude and longitude must be finite JSON numbers within [-90, 90] and [-180, 180].',
+    };
+  }
+
+  if (
+    typeof fixTimestampMs !== 'number' ||
+    !Number.isSafeInteger(fixTimestampMs) ||
+    fixTimestampMs <= 0
+  ) {
+    throw {
+      statusCode: 400,
+      code: 'INVALID_FIX_TIMESTAMP',
+      message: 'GPS fix timestamp must be a positive integer Unix timestamp in milliseconds.',
+    };
+  }
+
+  const now = Date.now();
+  if (fixTimestampMs < now - LOCATION_FIX_MAX_AGE_MS) {
+    throw {
+      statusCode: 400,
+      code: 'STALE_LOCATION_FIX',
+      message: 'GPS fix is more than five minutes old. Submit a fresh location fix.',
+    };
+  }
+  if (fixTimestampMs > now + LOCATION_FIX_MAX_FUTURE_MS) {
+    throw {
+      statusCode: 400,
+      code: 'FUTURE_LOCATION_FIX',
+      message: 'GPS fix timestamp is more than 30 seconds in the future.',
     };
   }
 
   const pool = getDbPool();
-  await pool.query(
+  const [result] = await pool.query(
     `UPDATE driver_profiles
-     SET current_latitude = ?, current_longitude = ?, location_updated_at = NOW()
-     WHERE user_id = ?`,
-    [numLat, numLon, userId]
+     SET current_latitude = ?, current_longitude = ?,
+         location_updated_at = NOW(), location_fix_timestamp_ms = ?
+     WHERE user_id = ?
+       AND (location_fix_timestamp_ms IS NULL OR location_fix_timestamp_ms < ?)`,
+    [latitude, longitude, fixTimestampMs, userId, fixTimestampMs]
   );
 
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'LOCATION_FIX_OUT_OF_ORDER',
+      message: 'This GPS fix is not newer than the latest stored location.',
+    };
+  }
+
   return {
-    latitude: numLat,
-    longitude: numLon,
+    latitude,
+    longitude,
+    fix_timestamp_ms: fixTimestampMs,
     updated_at: new Date().toISOString(),
   };
 }
@@ -614,21 +920,26 @@ export async function findNearestAvailableDrivers(bookingId) {
   const pool = getDbPool();
   const [candidates] = await pool.query(
     `SELECT d.driver_id, d.user_id, u.name, u.phone_no, d.vehicle_model, d.vehicle_no, d.vehicle_category,
+            d.vehicle_color, d.passenger_capacity, d.vehicle_approval_status, d.is_vehicle_active,
             d.current_latitude, d.current_longitude, d.rating
      FROM driver_profiles d
      JOIN users u ON d.user_id = u.user_id
      WHERE d.approval_status = 'APPROVED'
        AND d.is_available = TRUE
+       AND d.vehicle_approval_status = 'APPROVED'
+       AND d.is_vehicle_active = TRUE
        AND d.vehicle_category = ?
        AND d.current_latitude IS NOT NULL
        AND d.current_longitude IS NOT NULL
+       AND d.location_fix_timestamp_ms IS NOT NULL
+       AND d.location_fix_timestamp_ms >= ?
        AND d.driver_id NOT IN (
          SELECT driver_id FROM driver_booking_rejections WHERE booking_id = ?
        )
        AND d.driver_id NOT IN (
          SELECT driver_id FROM bookings WHERE status IN ('CONFIRMED', 'ONGOING') AND driver_id IS NOT NULL
        )`,
-    [bookingCategory, bookingId]
+    [bookingCategory, Date.now() - LOCATION_FIX_MAX_AGE_MS, bookingId]
   );
 
   if (candidates.length === 0) {
@@ -667,80 +978,225 @@ export async function findNearestAvailableDrivers(bookingId) {
  * Assign the nearest available driver using atomic row-locking (REQ-022)
  * With graceful fallback to broadcast dispatch queue when no locations exist
  */
-export async function assignNearestDriver(bookingId) {
-  const booking = await getBookingById(bookingId);
-  const ranking = await findNearestAvailableDrivers(bookingId);
 
-  if (!ranking.hasLocations || !ranking.nearest) {
-    return {
-      assigned: false,
-      fallback: 'broadcast_queue',
-      compatibleDriversFound: Boolean(ranking.compatibleDriversFound),
-      message: `No compatible ${booking.vehicle_tier} drivers available nearby; ride offer remains in broadcast dispatch queue.`,
+export async function assignNearestDriver(bookingId, requester) {
+  if (!requester || !['RIDER', 'ADMIN'].includes(requester.role)) {
+    throw {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      message: 'Only a rider or administrator may dispatch a booking.',
     };
   }
 
-  const nearestDriver = ranking.nearest;
-  const pool = getDbPool();
-  const connection = await pool.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
-    const [targetRows] = await connection.query(
-      `SELECT booking_id, status, driver_id, vehicle_tier FROM bookings WHERE booking_id = ? FOR UPDATE`,
-      [bookingId]
-    );
-
-    if (
-      targetRows.length === 0 ||
-      targetRows[0].status !== 'REQUESTED' ||
-      targetRows[0].driver_id !== null
-    ) {
-      await connection.rollback();
-      throw {
-        statusCode: 409,
-        code: 'BOOKING_ALREADY_ASSIGNED',
-        message: 'This ride booking is no longer available in REQUESTED status.',
-      };
-    }
-
-    if (
-      !nearestDriver.vehicle_category ||
-      nearestDriver.vehicle_category.toUpperCase() !== String(targetRows[0].vehicle_tier).toUpperCase()
-    ) {
-      await connection.rollback();
-      throw {
-        statusCode: 403,
-        code: 'INCOMPATIBLE_VEHICLE_CATEGORY',
-        message: `Assigned driver category (${nearestDriver.vehicle_category}) does not match booking tier (${targetRows[0].vehicle_tier}).`,
-      };
-    }
-
-    await connection.query(
-      `UPDATE bookings
-       SET driver_id = ?, status = 'CONFIRMED', updated_at = NOW()
-       WHERE booking_id = ?`,
-      [nearestDriver.driver_id, bookingId]
-    );
-
-    await connection.commit();
-
-    const updatedBooking = await getBookingById(bookingId);
-    return {
-      assigned: true,
-      driver: nearestDriver,
-      booking: updatedBooking,
-      driver_id: nearestDriver.driver_id,
-      distance_km: nearestDriver.distance_km,
-      status: updatedBooking.status,
-      message: `Nearest driver ${nearestDriver.name} (${nearestDriver.distance_km} km away) was assigned successfully.`,
+  const requestedBooking = await getBookingById(bookingId);
+  if (
+    requester?.role === 'RIDER' &&
+    Number(requestedBooking.user_id) !== Number(requester.user_id)
+  ) {
+    throw {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      message: 'You are not authorized to dispatch another passenger’s booking.',
     };
-  } catch (err) {
-    await connection.rollback();
-    throw err;
-  } finally {
-    connection.release();
   }
+
+  const maxRefreshes = 5;
+
+  for (let attempt = 0; attempt < maxRefreshes; attempt++) {
+    const booking = await getBookingById(bookingId);
+    const ranking = await findNearestAvailableDrivers(bookingId);
+
+    if (!ranking.hasLocations || !ranking.nearest) {
+      if (!ranking.compatibleDriversFound) {
+        try {
+          await recordDispatchFailure(
+            bookingId,
+            `No compatible and active ${booking.vehicle_tier} drivers available nearby.`
+          );
+        } catch (e) {
+          console.warn(
+            `[Dispatch Failure] Could not record failure for booking ${bookingId}:`,
+            e.code || e.message
+          );
+        }
+      }
+
+      return {
+        assigned: false,
+        fallback: 'broadcast_queue',
+        compatibleDriversFound: Boolean(ranking.compatibleDriversFound),
+        message: `No compatible ${booking.vehicle_tier} drivers available nearby; ride offer remains in broadcast dispatch queue.`,
+      };
+    }
+
+    let refreshCandidates = false;
+
+    for (const candidate of ranking.drivers) {
+      const connection = await getDbPool().getConnection();
+      let transactionOpen = false;
+
+      try {
+        await connection.beginTransaction();
+        transactionOpen = true;
+
+        const [targetRows] = await connection.query(
+          `SELECT booking_id, status, driver_id, vehicle_tier
+           FROM bookings WHERE booking_id = ? FOR UPDATE`,
+          [bookingId]
+        );
+
+        if (
+          targetRows.length === 0 ||
+          targetRows[0].status !== 'REQUESTED' ||
+          targetRows[0].driver_id !== null
+        ) {
+          throw {
+            statusCode: 409,
+            code: 'BOOKING_ALREADY_ASSIGNED',
+            message: 'This ride booking is no longer available in REQUESTED status.',
+          };
+        }
+
+        const tier = String(targetRows[0].vehicle_tier).toUpperCase();
+
+        if (
+          !candidate.vehicle_category ||
+          candidate.vehicle_category.toUpperCase() !== tier
+        ) {
+          throw {
+            statusCode: 403,
+            code: 'INCOMPATIBLE_VEHICLE_CATEGORY',
+            message: 'The selected driver category does not match this booking.',
+          };
+        }
+
+        // Preserve the same booking-then-driver lock order as manual acceptance.
+        const [driverRows] = await connection.query(
+          `SELECT driver_id, approval_status, is_available,
+                  vehicle_approval_status, is_vehicle_active,
+                  vehicle_category, current_latitude, current_longitude
+           FROM driver_profiles
+           WHERE driver_id = ? FOR UPDATE`,
+          [candidate.driver_id]
+        );
+
+        const driver = driverRows[0];
+
+        if (!driver) {
+          refreshCandidates = true;
+          continue;
+        }
+
+        const [activeRides] = await connection.query(
+          `SELECT booking_id FROM bookings
+           WHERE driver_id = ?
+             AND status IN ('CONFIRMED', 'ONGOING')
+           LIMIT 1`,
+          [driver.driver_id]
+        );
+
+        const [rejections] = await connection.query(
+          `SELECT booking_id FROM driver_booking_rejections
+           WHERE driver_id = ? AND booking_id = ?
+           LIMIT 1`,
+          [driver.driver_id, bookingId]
+        );
+
+        const [freshnessRows] = await connection.query(
+          `SELECT (
+             location_fix_timestamp_ms IS NOT NULL
+             AND location_fix_timestamp_ms >= ?
+           ) AS location_fresh
+           FROM driver_profiles WHERE driver_id = ?`,
+          [Date.now() - LOCATION_FIX_MAX_AGE_MS, driver.driver_id]
+        );
+
+        if (
+          driver.approval_status !== 'APPROVED' ||
+          !driver.is_available ||
+          driver.vehicle_approval_status !== 'APPROVED' ||
+          !driver.is_vehicle_active ||
+          !driver.vehicle_category ||
+          driver.vehicle_category.toUpperCase() !== tier ||
+          driver.current_latitude == null ||
+          driver.current_longitude == null ||
+          !freshnessRows[0]?.location_fresh ||
+          activeRides.length > 0 ||
+          rejections.length > 0
+        ) {
+          refreshCandidates = true;
+          continue;
+        }
+
+        const [updateResult] = await connection.query(
+          `UPDATE bookings
+           SET driver_id = ?, status = 'CONFIRMED', updated_at = NOW()
+           WHERE booking_id = ?
+             AND status = 'REQUESTED'
+             AND driver_id IS NULL`,
+          [driver.driver_id, bookingId]
+        );
+
+        if (updateResult.affectedRows !== 1) {
+          throw {
+            statusCode: 409,
+            code: 'BOOKING_ALREADY_ASSIGNED',
+            message: 'Another dispatch operation claimed this booking.',
+          };
+        }
+
+        await connection.commit();
+        transactionOpen = false;
+
+        const updatedBooking = await getBookingById(bookingId);
+
+        return {
+          assigned: true,
+          driver: candidate,
+          booking: updatedBooking,
+          driver_id: driver.driver_id,
+          distance_km: candidate.distance_km,
+          status: updatedBooking.status,
+          message: `Nearest eligible driver ${candidate.name} (${candidate.distance_km} km away) was assigned successfully.`,
+        };
+      } catch (err) {
+        if (transactionOpen) {
+          try {
+            await connection.rollback();
+          } catch (rollbackError) {
+            // Preserve the original error.
+          }
+          transactionOpen = false;
+        }
+
+        if (err.code === 'DRIVER_UNAVAILABLE') {
+          refreshCandidates = true;
+          continue;
+        }
+
+        throw err;
+      } finally {
+        if (transactionOpen) {
+          try {
+            await connection.rollback();
+          } catch (rollbackError) {
+            // Preserve the original error.
+          }
+        }
+        connection.release();
+      }
+    }
+
+    if (!refreshCandidates) break;
+    // Refresh after releasing locks; a concurrent dispatch may have claimed a driver.
+  }
+
+    const finalRanking = await findNearestAvailableDrivers(bookingId);
+
+  return {
+    assigned: false,
+    fallback: 'broadcast_queue',
+    compatibleDriversFound: Boolean(finalRanking.compatibleDriversFound),
+    message: 'Eligible drivers became unavailable during dispatch; ride remains queued for retry.',
+  };
 }
-

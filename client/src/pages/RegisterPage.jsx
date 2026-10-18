@@ -20,6 +20,8 @@ export default function RegisterPage() {
   const [vehicleNo, setVehicleNo] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [vehicleCategory, setVehicleCategory] = useState('STANDARD');
+  const [vehicleColor, setVehicleColor] = useState('White');
+  const [passengerCapacity, setPassengerCapacity] = useState('4');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -48,6 +50,8 @@ export default function RegisterPage() {
         vehicleNo: role === 'driver' ? vehicleNo.trim() : undefined,
         vehicleModel: role === 'driver' ? vehicleModel.trim() : undefined,
         vehicleCategory: role === 'driver' ? vehicleCategory : undefined,
+        vehicleColor: role === 'driver' ? vehicleColor.trim() : undefined,
+        passengerCapacity: role === 'driver' ? parseInt(passengerCapacity, 10) : undefined,
       });
 
       if (newUser.role === 'DRIVER') {
@@ -210,7 +214,10 @@ export default function RegisterPage() {
                         key={cat.id}
                         type="button"
                         id={`category-select-${cat.id.toLowerCase()}`}
-                        onClick={() => setVehicleCategory(cat.id)}
+                        onClick={() => {
+                          setVehicleCategory(cat.id);
+                          setPassengerCapacity(cat.id === 'XL' ? '6' : '4');
+                        }}
                         className={`p-2 rounded-lg border text-left transition-all ${
                           vehicleCategory === cat.id
                             ? 'border-theme-primary bg-theme-primary/10 text-theme-primary font-semibold ring-1 ring-theme-primary'
@@ -226,8 +233,31 @@ export default function RegisterPage() {
                     * Determines which ride categories you are certified to dispatch and accept.
                   </p>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    label="Vehicle Exterior Color"
+                    id="driver-vehicle-color"
+                    placeholder="e.g. Silver / White / Black"
+                    value={vehicleColor}
+                    onChange={(e) => setVehicleColor(e.target.value)}
+                    required
+                  />
+                  <Input
+                    label="Passenger Seating Capacity"
+                    id="driver-vehicle-capacity"
+                    type="number"
+                    min="1"
+                    max="10"
+                    placeholder="e.g. 4"
+                    value={passengerCapacity}
+                    onChange={(e) => setPassengerCapacity(e.target.value)}
+                    required
+                  />
+                </div>
+
                 <p className="text-[10px] text-theme-text-secondary">
-                  Driver registrations are placed in PENDING review until authorized by system administration.
+                  Driver registrations and vehicle fleet credentials are placed in PENDING review until authorized by system administration.
                 </p>
               </div>
             )}

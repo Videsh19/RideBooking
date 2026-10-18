@@ -407,6 +407,26 @@ async function runTests() {
     });
     assert(rateSixRes.status === 400, 'Rating 6 stars rejected (HTTP 400 INVALID_RATING_VALUE)');
 
+    const invalidRatingCases = [
+      { body: { bookingId: trip1.bookingId, rating: 2.5 }, label: 'Fractional rating' },
+      { body: { bookingId: trip1.bookingId, rating: '4abc' }, label: 'Suffixed string rating' },
+      { body: { bookingId: trip1.bookingId, rating: null }, label: 'Null rating' },
+      { body: { bookingId: trip1.bookingId }, label: 'Missing rating' },
+    ];
+    for (const { body, label } of invalidRatingCases) {
+      const invalidRateRes = await fetch(`${BASE_URL}/ratings`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${rider1Token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const invalidRateData = await invalidRateRes.json();
+      assert(
+        invalidRateRes.status === 400 &&
+          invalidRateData.error?.code === 'INVALID_RATING_VALUE',
+        `${label} rejected (HTTP 400 INVALID_RATING_VALUE)`
+      );
+    }
+
     // 5. Successful post-trip rating submission
     const validRateRes = await fetch(`${BASE_URL}/ratings`, {
       method: 'POST',

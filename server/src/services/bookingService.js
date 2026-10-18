@@ -380,6 +380,7 @@ export async function calculateRoadRoute({
   destLng,
   pickupDetails = {},
   destDetails = {},
+  includeGeometry = false,
 }) {
   const routingBaseUrl = process.env.ROUTING_API_URL?.trim();
   if (!routingBaseUrl) {
@@ -424,7 +425,10 @@ export async function calculateRoadRoute({
   }
 
   // Call Road Routing API (OSRM)
-  const endpoint = `${routingBaseUrl.replace(/\/$/, '')}/route/v1/driving/${pLng},${pLat};${dLng},${dLat}?overview=false`;
+  const routeOptions = includeGeometry
+    ? 'overview=full&geometries=geojson'
+    : 'overview=false';
+  const endpoint = `${routingBaseUrl.replace(/\/$/, '')}/route/v1/driving/${pLng},${pLat};${dLng},${dLat}?${routeOptions}`;
 
   let response;
   try {
@@ -463,12 +467,42 @@ export async function calculateRoadRoute({
   const primary = routeData.routes[0];
   const distanceKm = parseFloat((primary.distance / 1000).toFixed(2));
   const estimatedDurationMin = Math.max(1, Math.round(primary.duration / 60));
+  const geometry = primary.geometry;
+  const hasValidGeometry =
+    includeGeometry &&
+    geometry?.type === 'LineString' &&
+    Array.isArray(geometry.coordinates) &&
+    geometry.coordinates.length >= 2 &&
+    geometry.coordinates.every(
+      (coordinate) =>
+        Array.isArray(coordinate) &&
+        coordinate.length >= 2 &&
+        typeof coordinate[0] === 'number' &&
+        Number.isFinite(coordinate[0]) &&
+        coordinate[0] >= -180 &&
+        coordinate[0] <= 180 &&
+        typeof coordinate[1] === 'number' &&
+        Number.isFinite(coordinate[1]) &&
+        coordinate[1] >= -90 &&
+        coordinate[1] <= 90
+    );
 
   return {
     distanceKm,
     estimatedDurationMin,
     pickupTerritory,
     destTerritory,
+    ...(hasValidGeometry
+      ? {
+          routeGeometry: {
+            type: 'LineString',
+            coordinates: geometry.coordinates.map(([longitude, latitude]) => [
+              longitude,
+              latitude,
+            ]),
+          },
+        }
+      : {}),
   };
 }
 
@@ -839,8 +873,9 @@ export async function createBooking({
     const [bookingResult] = await connection.query(
       `INSERT INTO bookings (
          user_id, route_id, pickup_address, dest_address,
-         pickup_zone, dest_zone, vehicle_tier, status, total_fare
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?)`,
+         pickup_zone, dest_zone, vehicle_tier, status, total_fare,
+         base_fare, rate_per_km
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?, ?, ?)`,
       [
         userId,
         routeId,
@@ -850,6 +885,8 @@ export async function createBooking({
         routeInfo.destTerritory,
         chosenCategory,
         fareInfo.totalFare,
+        fareInfo.baseFare,
+        fareInfo.ratePerKm,
       ]
     );
     const bookingId = bookingResult.insertId;
@@ -883,6 +920,9 @@ export async function getBookingById(bookingId) {
        d.vehicle_no AS driver_vehicle_no,
        d.vehicle_model AS driver_vehicle_model,
        d.vehicle_category AS driver_vehicle_category,
+       d.vehicle_color AS driver_vehicle_color,
+       d.passenger_capacity AS driver_vehicle_capacity,
+       d.vehicle_approval_status AS driver_vehicle_status,
        d.rating AS driver_rating,
        b.pickup_address,
        b.dest_address,
@@ -893,6 +933,8 @@ export async function getBookingById(bookingId) {
        b.status,
        b.payment_status,
        b.total_fare,
+       b.base_fare,
+       b.rate_per_km,
        b.cancellation_reason,
        b.cancellation_fee,
        b.cancelled_at,
@@ -907,6 +949,10 @@ export async function getBookingById(bookingId) {
        loc_d.longitude AS dest_longitude,
        pay.payment_id,
        pay.payment_method,
+       pay.payment_status AS transaction_payment_status,
+       pay.cash_collection_status,
+       pay.cash_collected_at,
+       pay.cash_collected_by_driver_id,
        pay.transaction_id,
        pay.payment_date,
        rat.rating_id,
@@ -920,7 +966,32 @@ export async function getBookingById(bookingId) {
      LEFT JOIN routes r ON b.route_id = r.route_id
      LEFT JOIN locations loc_p ON r.pickup_location_id = loc_p.location_id
      LEFT JOIN locations loc_d ON r.dest_location_id = loc_d.location_id
-     LEFT JOIN payments pay ON b.booking_id = pay.booking_id AND pay.payment_status = 'SUCCESS'
+     LEFT JOIN payments pay ON pay.payment_id = (
+       SELECT candidate.payment_id
+       FROM payments candidate
+       WHERE candidate.booking_id = b.booking_id
+         AND (
+           candidate.payment_status = 'SUCCESS'
+           OR (
+             candidate.payment_method = 'Cash'
+             AND (
+               candidate.cash_collection_status = 'OUTSTANDING'
+               OR candidate.cash_collection_status IS NULL
+             )
+           )
+         )
+       ORDER BY (
+                  candidate.payment_method = 'Cash'
+                  AND (
+                    candidate.cash_collection_status = 'OUTSTANDING'
+                    OR candidate.cash_collection_status IS NULL
+                  )
+                ) DESC,
+                (candidate.payment_status = 'SUCCESS') DESC,
+                candidate.payment_date DESC,
+                candidate.payment_id DESC
+       LIMIT 1
+     )
      LEFT JOIN ratings rat ON b.booking_id = rat.booking_id
      WHERE b.booking_id = ?`,
     [bookingId]
@@ -931,6 +1002,139 @@ export async function getBookingById(bookingId) {
   }
 
   return rows[0];
+}
+
+/**
+ * Retrieve fresh driver coordinates for the owning rider's active booking only.
+ */
+export async function getBookingTracking({
+  bookingId,
+  userId,
+  includeRouteGeometry = false,
+}) {
+  const pool = getDbPool();
+  const [rows] = await pool.query(
+    `SELECT b.status,
+            b.driver_id IS NOT NULL AS has_assigned_driver,
+            d.current_latitude,
+            d.current_longitude,
+            d.location_fix_timestamp_ms,
+            pickup_location.latitude AS pickup_latitude,
+            pickup_location.longitude AS pickup_longitude,
+            destination_location.latitude AS dest_latitude,
+            destination_location.longitude AS dest_longitude
+     FROM bookings b
+     LEFT JOIN driver_profiles d ON b.driver_id = d.driver_id
+     LEFT JOIN routes r ON b.route_id = r.route_id
+     LEFT JOIN locations pickup_location ON r.pickup_location_id = pickup_location.location_id
+     LEFT JOIN locations destination_location ON r.dest_location_id = destination_location.location_id
+     WHERE b.booking_id = ? AND b.user_id = ?
+     LIMIT 1`,
+    [bookingId, userId]
+  );
+
+  if (rows.length === 0) {
+    throw {
+      statusCode: 404,
+      code: 'BOOKING_NOT_FOUND',
+      message: 'Booking not found.',
+    };
+  }
+
+  const booking = rows[0];
+  const latitude = Number(booking.current_latitude);
+  const longitude = Number(booking.current_longitude);
+  const rawFixTimestampMs = booking.location_fix_timestamp_ms;
+  const fixTimestampMs = typeof rawFixTimestampMs === 'number'
+    ? rawFixTimestampMs
+    : typeof rawFixTimestampMs === 'string' && /^[0-9]+$/.test(rawFixTimestampMs)
+      ? Number(rawFixTimestampMs)
+      : NaN;
+  const now = Date.now();
+  const isActiveRide = booking.status === 'CONFIRMED' || booking.status === 'ONGOING';
+  const hasValidCoordinates =
+    booking.current_latitude !== null &&
+    booking.current_longitude !== null &&
+    Number.isFinite(latitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 &&
+    longitude <= 180;
+  const hasFreshFix =
+    (typeof rawFixTimestampMs === 'number' || typeof rawFixTimestampMs === 'string') &&
+    Number.isSafeInteger(fixTimestampMs) &&
+    fixTimestampMs > 0 &&
+    fixTimestampMs >= now - 5 * 60 * 1000 &&
+    fixTimestampMs <= now + 30 * 1000;
+  const available =
+    Boolean(booking.has_assigned_driver) &&
+    isActiveRide &&
+    hasValidCoordinates &&
+    hasFreshFix;
+
+  const tracking = {
+    status: booking.status,
+    available,
+    fresh: available,
+    latitude: available ? latitude : null,
+    longitude: available ? longitude : null,
+    fix_timestamp_ms: available ? fixTimestampMs : null,
+  };
+
+  const pickupLatitude = Number(booking.pickup_latitude);
+  const pickupLongitude = Number(booking.pickup_longitude);
+  const destinationLatitude = Number(booking.dest_latitude);
+  const destinationLongitude = Number(booking.dest_longitude);
+  const hasValidRouteCoordinates =
+    booking.pickup_latitude !== null &&
+    booking.pickup_latitude !== undefined &&
+    booking.pickup_longitude !== null &&
+    booking.pickup_longitude !== undefined &&
+    booking.dest_latitude !== null &&
+    booking.dest_latitude !== undefined &&
+    booking.dest_longitude !== null &&
+    booking.dest_longitude !== undefined &&
+    Number.isFinite(pickupLatitude) &&
+    pickupLatitude >= -90 &&
+    pickupLatitude <= 90 &&
+    Number.isFinite(pickupLongitude) &&
+    pickupLongitude >= -180 &&
+    pickupLongitude <= 180 &&
+    Number.isFinite(destinationLatitude) &&
+    destinationLatitude >= -90 &&
+    destinationLatitude <= 90 &&
+    Number.isFinite(destinationLongitude) &&
+    destinationLongitude >= -180 &&
+    destinationLongitude <= 180;
+
+  if (
+    includeRouteGeometry &&
+    Boolean(booking.has_assigned_driver) &&
+    isActiveRide &&
+    hasValidRouteCoordinates
+  ) {
+    try {
+      const route = await calculateRoadRoute({
+        pickupLat: pickupLatitude,
+        pickupLng: pickupLongitude,
+        destLat: destinationLatitude,
+        destLng: destinationLongitude,
+        includeGeometry: true,
+      });
+
+      if (route.routeGeometry) {
+        tracking.route_geometry = route.routeGeometry;
+      }
+    } catch (err) {
+      console.warn(
+        `[Booking Tracking] Route geometry unavailable for booking ${bookingId}:`,
+        err.code || err.message
+      );
+    }
+  }
+
+  return tracking;
 }
 
 /**
@@ -952,6 +1156,9 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        d.vehicle_no AS driver_vehicle_no,
        d.vehicle_model AS driver_vehicle_model,
        d.vehicle_category AS driver_vehicle_category,
+       d.vehicle_color AS driver_vehicle_color,
+       d.passenger_capacity AS driver_vehicle_capacity,
+       d.vehicle_approval_status AS driver_vehicle_status,
        d.rating AS driver_rating,
        b.pickup_address,
        b.dest_address,
@@ -962,6 +1169,8 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        b.status,
        b.payment_status,
        b.total_fare,
+       b.base_fare,
+       b.rate_per_km,
        b.cancellation_reason,
        b.cancellation_fee,
        b.cancelled_at,
@@ -975,6 +1184,10 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        loc_d.longitude AS dest_longitude,
        pay.payment_id,
        pay.payment_method,
+       pay.payment_status AS transaction_payment_status,
+       pay.cash_collection_status,
+       pay.cash_collected_at,
+       pay.cash_collected_by_driver_id,
        pay.transaction_id,
        pay.payment_date,
        rat.rating_id,
@@ -987,7 +1200,32 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
      LEFT JOIN routes r ON b.route_id = r.route_id
      LEFT JOIN locations loc_p ON r.pickup_location_id = loc_p.location_id
      LEFT JOIN locations loc_d ON r.dest_location_id = loc_d.location_id
-     LEFT JOIN payments pay ON b.booking_id = pay.booking_id AND pay.payment_status = 'SUCCESS'
+     LEFT JOIN payments pay ON pay.payment_id = (
+       SELECT candidate.payment_id
+       FROM payments candidate
+       WHERE candidate.booking_id = b.booking_id
+         AND (
+           candidate.payment_status = 'SUCCESS'
+           OR (
+             candidate.payment_method = 'Cash'
+             AND (
+               candidate.cash_collection_status = 'OUTSTANDING'
+               OR candidate.cash_collection_status IS NULL
+             )
+           )
+         )
+       ORDER BY (
+                  candidate.payment_method = 'Cash'
+                  AND (
+                    candidate.cash_collection_status = 'OUTSTANDING'
+                    OR candidate.cash_collection_status IS NULL
+                  )
+                ) DESC,
+                (candidate.payment_status = 'SUCCESS') DESC,
+                candidate.payment_date DESC,
+                candidate.payment_id DESC
+       LIMIT 1
+     )
      LEFT JOIN ratings rat ON b.booking_id = rat.booking_id
      WHERE b.user_id = ?
      ORDER BY b.booking_date DESC
@@ -1042,15 +1280,23 @@ export async function cancelBooking(bookingId, { reason = 'Cancelled by passenge
   }
 
   const pool = getDbPool();
-  await pool.query(
+  const [result] = await pool.query(
     `UPDATE bookings 
      SET status = 'CANCELLED',
          cancellation_reason = ?,
          cancellation_fee = ?,
          cancelled_at = NOW()
-     WHERE booking_id = ?`,
-    [reason, cancellationFee, bookingId]
+     WHERE booking_id = ? AND status = ?`,
+    [reason, cancellationFee, bookingId, booking.status]
   );
+
+  if (result.affectedRows !== 1) {
+    throw {
+      statusCode: 409,
+      code: 'RIDE_STATUS_CONFLICT',
+      message: 'Ride status changed before the booking could be cancelled.',
+    };
+  }
 
   return await getBookingById(bookingId);
 }

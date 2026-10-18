@@ -2,8 +2,8 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getDbPool } from '../config/db.js';
+import { env } from '../config/env.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'goride_development_secret_key_change_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 /**
@@ -18,7 +18,7 @@ export function generateToken(user) {
       name: user.name,
       tokenVersion: user.token_version || 1,
     },
-    JWT_SECRET,
+    env.jwtSecret,
     { expiresIn: JWT_EXPIRES_IN }
   );
 }
@@ -38,6 +38,8 @@ export async function register({
   vehicleNo,
   vehicleModel,
   vehicleCategory,
+  vehicleColor,
+  passengerCapacity,
 }) {
   if (!name || typeof name !== 'string' || !name.trim()) {
     throw { statusCode: 400, code: 'INVALID_NAME', message: 'Full legal name is required.' };
@@ -157,11 +159,28 @@ export async function register({
       const cleanLicense = licenseNo.trim();
       const cleanVehicleNo = vehicleNo.trim();
       const cleanVehicleModel = vehicleModel.trim();
+      const cleanVehicleColor = (vehicleColor && typeof vehicleColor === 'string' && vehicleColor.trim())
+        ? vehicleColor.trim()
+        : 'White';
+      const cleanPassengerCapacity = parseInt(passengerCapacity, 10) > 0
+        ? parseInt(passengerCapacity, 10)
+        : (cleanVehicleCategory === 'XL' ? 6 : 4);
 
       const [driverResult] = await connection.query(
-        `INSERT INTO driver_profiles (user_id, license_no, vehicle_no, vehicle_model, vehicle_category, approval_status, is_available)
-         VALUES (?, ?, ?, ?, ?, 'PENDING', FALSE)`,
-        [userId, cleanLicense, cleanVehicleNo, cleanVehicleModel, cleanVehicleCategory]
+        `INSERT INTO driver_profiles (
+           user_id, license_no, vehicle_no, vehicle_model, vehicle_category,
+           vehicle_color, passenger_capacity, approval_status, vehicle_approval_status,
+           is_vehicle_active, is_available
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', TRUE, FALSE)`,
+        [
+          userId,
+          cleanLicense,
+          cleanVehicleNo,
+          cleanVehicleModel,
+          cleanVehicleCategory,
+          cleanVehicleColor,
+          cleanPassengerCapacity,
+        ]
       );
 
       driverProfile = {
@@ -170,7 +189,11 @@ export async function register({
         vehicle_no: cleanVehicleNo,
         vehicle_model: cleanVehicleModel,
         vehicle_category: cleanVehicleCategory,
+        vehicle_color: cleanVehicleColor,
+        passenger_capacity: cleanPassengerCapacity,
         approval_status: 'PENDING',
+        vehicle_approval_status: 'PENDING',
+        is_vehicle_active: true,
         is_available: false,
       };
     }
@@ -364,7 +387,7 @@ export async function requestPasswordReset(email) {
   );
 
   // In development environments without real SMTP delivery, include development token
-  if (process.env.NODE_ENV !== 'production') {
+  if (!env.isProduction) {
     return {
       ...genericResponse,
       devResetToken: rawToken,

@@ -25,11 +25,16 @@ CREATE TABLE IF NOT EXISTS driver_profiles (
     vehicle_no VARCHAR(50) NOT NULL,
     vehicle_model VARCHAR(100) NOT NULL,
     vehicle_category ENUM('STANDARD', 'COMFORT', 'XL') NULL,
+    vehicle_color VARCHAR(50) DEFAULT 'White',
+    passenger_capacity INT NOT NULL DEFAULT 4,
+    vehicle_approval_status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'APPROVED',
+    is_vehicle_active BOOLEAN NOT NULL DEFAULT TRUE,
     license_doc_path VARCHAR(255) NULL,
     vehicle_doc_path VARCHAR(255) NULL,
     current_latitude DECIMAL(10, 7) NULL,
     current_longitude DECIMAL(10, 7) NULL,
     location_updated_at TIMESTAMP NULL,
+    location_fix_timestamp_ms BIGINT UNSIGNED NULL,
     rating DECIMAL(3, 2) DEFAULT 5.00,
     is_available BOOLEAN DEFAULT FALSE,
     approval_status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'PENDING',
@@ -76,6 +81,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     status ENUM('REQUESTED', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'REQUESTED',
     payment_status ENUM('UNPAID', 'PAID') NOT NULL DEFAULT 'UNPAID',
     total_fare DECIMAL(10, 2) NOT NULL,
+    base_fare DECIMAL(10, 2) NULL,
+    rate_per_km DECIMAL(10, 2) NULL,
     cancellation_reason VARCHAR(255) NULL,
     cancellation_fee DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     cancelled_at TIMESTAMP NULL,
@@ -111,6 +118,9 @@ CREATE TABLE IF NOT EXISTS payments (
     amount DECIMAL(10, 2) NOT NULL,
     payment_method ENUM('Cash', 'Card', 'UPI', 'Wallet', 'NetBanking') NOT NULL,
     payment_status ENUM('PENDING', 'SUCCESS', 'FAILED', 'REFUND') NOT NULL DEFAULT 'PENDING',
+    cash_collection_status ENUM('OUTSTANDING', 'COLLECTED') NULL DEFAULT NULL,
+    cash_collected_at TIMESTAMP NULL,
+    cash_collected_by_driver_id INT NULL,
     transaction_id VARCHAR(100) NOT NULL UNIQUE,
     successful_booking_id INT GENERATED ALWAYS AS (IF(payment_status = 'SUCCESS', booking_id, NULL)) STORED,
     refund_reason VARCHAR(255) NULL,
@@ -122,9 +132,12 @@ CREATE TABLE IF NOT EXISTS payments (
     UNIQUE KEY uq_successful_payment (successful_booking_id),
     FOREIGN KEY (booking_id) REFERENCES bookings(booking_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_payments_cash_collector
+        FOREIGN KEY (cash_collected_by_driver_id) REFERENCES driver_profiles(driver_id) ON DELETE SET NULL,
     INDEX idx_payment_booking (booking_id),
     INDEX idx_payment_user (user_id),
-    INDEX idx_payment_status (payment_status)
+    INDEX idx_payment_status (payment_status),
+    INDEX idx_payment_cash_collection (cash_collection_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. Ratings Table (Post-Trip Star Ratings & Written Reviews)
@@ -155,4 +168,14 @@ CREATE TABLE IF NOT EXISTS password_resets (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     INDEX idx_token_hash (token_hash),
     INDEX idx_user_resets (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 10. Dispatch Failures Table (Logs failed, timed out, or unassigned dispatch attempts)
+CREATE TABLE IF NOT EXISTS dispatch_failures (
+    failure_id INT AUTO_INCREMENT PRIMARY KEY,
+    booking_id INT NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE,
+    INDEX idx_dispatch_failure_booking (booking_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

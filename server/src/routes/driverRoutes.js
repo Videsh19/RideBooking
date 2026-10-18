@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware.js';
 import { driverDocumentUpload } from '../middleware/uploadMiddleware.js';
 import * as driverService from '../services/driverService.js';
+import * as paymentService from '../services/paymentService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 const router = Router();
 
@@ -32,6 +34,12 @@ router.get('/profile', async (req, res, next) => {
 router.patch('/duty', async (req, res, next) => {
   try {
     const { isAvailable } = req.body;
+    if (typeof isAvailable !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_DUTY_STATUS', message: 'isAvailable must be a boolean.' },
+      });
+    }
     const result = await driverService.setDriverDuty(req.user.user_id, isAvailable);
     res.status(200).json({
       success: true,
@@ -49,8 +57,15 @@ router.patch('/duty', async (req, res, next) => {
  */
 router.patch('/location', async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
-    const result = await driverService.updateDriverLocation(req.user.user_id, { latitude, longitude });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body
+      : {};
+    const { latitude, longitude, fixTimestampMs } = body;
+    const result = await driverService.updateDriverLocation(req.user.user_id, {
+      latitude,
+      longitude,
+      fixTimestampMs,
+    });
     res.status(200).json({
       success: true,
       data: result,
@@ -133,11 +148,11 @@ router.get('/dispatch-queue', async (req, res, next) => {
  */
 router.post('/rides/:id/accept', async (req, res, next) => {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 
@@ -158,11 +173,11 @@ router.post('/rides/:id/accept', async (req, res, next) => {
  */
 router.post('/rides/:id/reject', async (req, res, next) => {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 
@@ -199,11 +214,11 @@ router.get('/rides/active', async (req, res, next) => {
  */
 router.patch('/rides/:id/start', async (req, res, next) => {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 
@@ -224,11 +239,11 @@ router.patch('/rides/:id/start', async (req, res, next) => {
  */
 router.patch('/rides/:id/complete', async (req, res, next) => {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 
@@ -239,6 +254,32 @@ router.patch('/rides/:id/complete', async (req, res, next) => {
       message: 'Trip completed successfully. Final fare calculated.',
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/driver/rides/:id/cash-collection
+ * Confirm cash collection for the driver's completed assigned ride
+ */
+router.patch('/rides/:id/cash-collection', async (req, res, next) => {
+  try {
+    const collection = await paymentService.collectCashPayment({
+      userId: req.user.user_id,
+      bookingId: req.params.id,
+    });
+    res.status(200).json({
+      success: true,
+      data: collection,
+      message: 'Cash collection confirmed successfully.',
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: { code: err.code || 'CASH_COLLECTION_ERROR', message: err.message },
+      });
+    }
     next(err);
   }
 });

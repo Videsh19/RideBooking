@@ -1,4 +1,5 @@
 import * as bookingService from '../services/bookingService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 /**
  * POST /api/bookings
@@ -18,8 +19,7 @@ export async function createBookingHandler(req, res, next) {
       vehicleCategory,
     } = req.body;
 
-    // Use trusted user ID from authentication token
-    const userId = req.user ? req.user.user_id : (parseInt(req.body.userId, 10) || 1);
+    const userId = req.user.user_id;
 
     const booking = await bookingService.createBooking({
       userId,
@@ -49,11 +49,11 @@ export async function createBookingHandler(req, res, next) {
  */
 export async function getBookingHandler(req, res, next) {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 
@@ -77,15 +77,49 @@ export async function getBookingHandler(req, res, next) {
 }
 
 /**
+ * GET /api/bookings/:id/tracking
+ * Retrieve live driver location for the authenticated rider's own booking.
+ */
+export async function getBookingTrackingHandler(req, res, next) {
+  try {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
+      });
+    }
+
+    const tracking = await bookingService.getBookingTracking({
+      bookingId,
+      userId: req.user.user_id,
+      includeRouteGeometry: req.query.includeRouteGeometry === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: tracking,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * GET /api/bookings
  * List passenger bookings
  */
 export async function listBookingsHandler(req, res, next) {
   try {
-    // If authenticated as RIDER, enforce viewing only their own bookings
-    let userId = req.user ? req.user.user_id : (parseInt(req.query.userId, 10) || 1);
-    if (req.user && req.user.role === 'ADMIN' && req.query.userId) {
-      userId = parseInt(req.query.userId, 10);
+    let userId = req.user.user_id;
+    if (req.user.role === 'ADMIN' && req.query.userId !== undefined) {
+      userId = parsePositiveIntegerId(req.query.userId);
+      if (userId === null) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_ID', message: 'User ID must be a positive integer.' },
+        });
+      }
     }
 
     const limit = parseInt(req.query.limit, 10) || 20;
@@ -112,11 +146,11 @@ export async function listBookingsHandler(req, res, next) {
  */
 export async function cancelBookingHandler(req, res, next) {
   try {
-    const bookingId = parseInt(req.params.id, 10);
-    if (isNaN(bookingId)) {
+    const bookingId = parsePositiveIntegerId(req.params.id);
+    if (bookingId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' },
       });
     }
 

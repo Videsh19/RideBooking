@@ -30,6 +30,7 @@ import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
 import EmptyState from '../components/common/EmptyState';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { getCashCollectionDisplayStatus } from '../utils/cashCollectionDisplay';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -43,6 +44,7 @@ export default function DriverDashboardPage() {
   const [refreshFeedback, setRefreshFeedback] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState(null);
+  const [locationFeedback, setLocationFeedback] = useState(null);
 
   // Live dispatch and ride state
   const [dispatchQueue, setDispatchQueue] = useState([]);
@@ -143,6 +145,138 @@ export default function DriverDashboardPage() {
     }, 8000);
     return () => clearInterval(interval);
   }, [token, isOnline, profile?.approval_status]);
+
+  useEffect(() => {
+    if (
+      !token ||
+      !user ||
+      user.role !== 'DRIVER' ||
+      !isOnline ||
+      profile?.approval_status !== 'APPROVED'
+    ) {
+      setLocationFeedback(null);
+      return undefined;
+    }
+
+    if (!navigator.geolocation) {
+      setLocationFeedback({
+        type: 'error',
+        message: 'Location sharing is unavailable because this browser does not support geolocation.',
+      });
+      return undefined;
+    }
+
+    let isActive = true;
+    let requestInFlight = false;
+    let activeRequestController = null;
+    let watchId;
+
+    const reportGeolocationError = (geoError) => {
+      if (!isActive) return;
+
+      const message = geoError.code === geoError.PERMISSION_DENIED
+        ? 'Location permission was denied. Allow location access in your browser settings to share your position.'
+        : geoError.code === geoError.POSITION_UNAVAILABLE
+          ? 'Your current location is unavailable. Check your device GPS or location settings.'
+          : geoError.code === geoError.TIMEOUT
+            ? 'Getting your location timed out. The browser will continue trying.'
+            : 'Unable to read your current location.';
+
+      setLocationFeedback({ type: 'error', message });
+    };
+
+    const sendLocation = async (position) => {
+      if (!isActive || requestInFlight) return;
+
+      const { latitude, longitude } = position.coords;
+      const fixTimestampMs = position.timestamp;
+      const now = Date.now();
+
+      if (!Number.isSafeInteger(fixTimestampMs) || fixTimestampMs <= 0) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The browser returned an invalid GPS timestamp. Waiting for a valid location fix.',
+        });
+        return;
+      }
+      if (fixTimestampMs < now - 5 * 60 * 1000) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The GPS fix is stale. Waiting for a fresh location.',
+        });
+        return;
+      }
+      if (fixTimestampMs > now + 30 * 1000) {
+        setLocationFeedback({
+          type: 'error',
+          message: 'The GPS fix timestamp is ahead of the current time. Waiting for a valid location.',
+        });
+        return;
+      }
+
+      // Drop overlapping samples rather than queueing fixes that may become stale.
+      requestInFlight = true;
+      const controller = new AbortController();
+      activeRequestController = controller;
+      try {
+        const res = await fetch(`${API_BASE_URL}/driver/location`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ latitude, longitude, fixTimestampMs }),
+          signal: controller.signal,
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(json.error?.message || 'Could not update your location.');
+        }
+
+        if (isActive) {
+          setLocationFeedback({
+            type: 'success',
+            message: 'Your current location is being shared.',
+          });
+        }
+      } catch (locationError) {
+        if (isActive) {
+          setLocationFeedback({
+            type: 'error',
+            message: locationError instanceof TypeError
+              ? 'Network error while sharing your location. Check your internet connection.'
+              : locationError.message || 'Could not update your location.',
+          });
+        }
+      } finally {
+        if (activeRequestController === controller) {
+          activeRequestController = null;
+        }
+        requestInFlight = false;
+      }
+    };
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        sendLocation,
+        reportGeolocationError,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      );
+    } catch (geoError) {
+      setLocationFeedback({
+        type: 'error',
+        message: geoError.message || 'Unable to start browser location sharing.',
+      });
+    }
+
+    return () => {
+      isActive = false;
+      activeRequestController?.abort();
+      if (watchId !== undefined) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [token, user, isOnline, profile?.approval_status]);
 
   const handleToggleDuty = async () => {
     if (!token || updating) return;
@@ -279,6 +413,29 @@ export default function DriverDashboardPage() {
     }
   };
 
+  const handleCollectCash = async (bookingId) => {
+    try {
+      setActionLoadingId(`collect-cash-${bookingId}`);
+      const res = await fetch(`${API_BASE_URL}/driver/rides/${bookingId}/cash-collection`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error?.message || 'Failed to confirm cash collection.');
+      } else {
+        await fetchDriverData();
+      }
+    } catch (err) {
+      alert(`Cash collection confirmation failed: ${err.message}`);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout
@@ -333,7 +490,7 @@ export default function DriverDashboardPage() {
           {/* Submitted Documentation Summary */}
           <Card
             title="Submitted Partner Credentials"
-            subtitle="Verified relational records in goride_db.driver_profiles"
+            subtitle="Verified relational records in the configured database"
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="p-3 rounded-lg border border-theme-border bg-theme-surface/40">
@@ -428,6 +585,19 @@ export default function DriverDashboardPage() {
           </div>
         )}
 
+        {locationFeedback && (
+          <div className={`p-3.5 rounded-lg border text-xs flex items-center gap-2 ${
+            locationFeedback.type === 'success'
+              ? 'border-emerald-800/40 bg-emerald-950/20 text-emerald-200'
+              : 'border-amber-800/40 bg-amber-950/20 text-amber-200'
+          }`}>
+            <AlertCircle className={`w-4 h-4 flex-shrink-0 ${
+              locationFeedback.type === 'success' ? 'text-emerald-400' : 'text-amber-400'
+            }`} />
+            <span>{locationFeedback.message}</span>
+          </div>
+        )}
+
         {profile && !profile.vehicle_category && (
           <div className="p-4 rounded-xl border border-amber-800/40 bg-amber-950/20 text-amber-200 text-xs flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
@@ -498,13 +668,13 @@ export default function DriverDashboardPage() {
               <span className="text-xs text-theme-text-secondary">rides</span>
             </div>
             <p className="text-[10px] text-theme-text-secondary mt-1">
-              Persisted in goride_db.bookings
+              Persisted in the configured database
             </p>
           </Card>
 
           <Card padding="p-4">
             <span className="text-[11px] font-medium text-theme-text-secondary block">
-              Total Ride Earnings
+              Completed Ride Fares (Gross)
             </span>
             <div className="flex items-baseline gap-2 mt-2">
               <span className="text-2xl font-bold text-emerald-400">
@@ -512,7 +682,7 @@ export default function DriverDashboardPage() {
               </span>
             </div>
             <p className="text-[10px] text-theme-text-secondary mt-1">
-              Real completed fare sum from MySQL
+              Completed fare total; not cash received or net driver payout
             </p>
           </Card>
         </div>
@@ -757,7 +927,32 @@ export default function DriverDashboardPage() {
                             ₹{t.total_fare}
                           </td>
                           <td className="py-2.5">
-                            {t.payment_status === 'PAID' ? (
+                            {getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'OUTSTANDING' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge variant="warning" size="sm">CASH OUTSTANDING</Badge>
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  onClick={() => handleCollectCash(t.booking_id)}
+                                  disabled={actionLoadingId === `collect-cash-${t.booking_id}`}
+                                >
+                                  {actionLoadingId === `collect-cash-${t.booking_id}`
+                                    ? 'Confirming...'
+                                    : 'Confirm Cash Collected'}
+                                </Button>
+                              </div>
+                            ) : getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'COLLECTED' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge variant="success" size="sm">CASH COLLECTED</Badge>
+                                <span className="text-[10px] text-theme-text-secondary">
+                                  {t.cash_collected_at
+                                    ? new Date(t.cash_collected_at).toLocaleString()
+                                    : '--'}
+                                </span>
+                              </div>
+                            ) : getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'UNVERIFIED' ? (
+                              <Badge variant="warning" size="sm">CASH COLLECTION UNVERIFIED</Badge>
+                            ) : t.payment_status === 'PAID' ? (
                               <Badge variant="success" size="sm">PAID</Badge>
                             ) : (
                               <Badge variant="warning" size="sm">PENDING</Badge>

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware.js';
 import { getDbPool } from '../config/db.js';
 import * as driverService from '../services/driverService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 const router = Router();
 
@@ -31,11 +32,11 @@ router.get('/driver-applications', async (req, res, next) => {
  */
 router.patch('/driver-applications/:id/approve', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.id, 10);
-    if (isNaN(driverId)) {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -56,11 +57,11 @@ router.patch('/driver-applications/:id/approve', async (req, res, next) => {
  */
 router.patch('/driver-applications/:id/reject', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.id, 10);
-    if (isNaN(driverId)) {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -106,13 +107,13 @@ router.get('/users', async (req, res, next) => {
  */
 router.get('/driver-documents/:driverId/:docType', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.driverId, 10);
+    const driverId = parsePositiveIntegerId(req.params.driverId);
     const { docType } = req.params;
 
-    if (isNaN(driverId)) {
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -162,10 +163,21 @@ router.get('/system-stats', async (req, res, next) => {
     const [paymentStats] = await pool.query(
       `SELECT 
          COUNT(*) as totalPayments,
-         COALESCE(SUM(CASE WHEN payment_status = 'SUCCESS' THEN amount ELSE 0 END), 0) as totalCollectedRevenue,
+         COALESCE(SUM(CASE
+           WHEN payment_status = 'SUCCESS'
+            AND (payment_method <> 'Cash' OR cash_collection_status = 'COLLECTED')
+           THEN amount ELSE 0 END), 0) as totalCollectedRevenue,
          COALESCE(SUM(CASE WHEN payment_status = 'REFUND' THEN amount ELSE 0 END), 0) as totalRefundedAmount,
          SUM(CASE WHEN payment_status = 'REFUND' THEN 1 ELSE 0 END) as refundedPayments
        FROM payments`
+    );
+
+    const [vehicleStats] = await pool.query(
+      `SELECT vehicle_category, COUNT(*) as count FROM driver_profiles GROUP BY vehicle_category`
+    );
+
+    const [dispatchFailureCount] = await pool.query(
+      `SELECT COUNT(*) as count FROM dispatch_failures`
     );
 
     res.status(200).json({
@@ -173,6 +185,8 @@ router.get('/system-stats', async (req, res, next) => {
       data: {
         usersByRole: roleCounts,
         driversByStatus: driverCounts,
+        vehiclesByCategory: vehicleStats,
+        totalDispatchFailures: dispatchFailureCount[0]?.count || 0,
         bookingsByStatus: bookingCounts,
         totals: totalBookings[0] || { total: 0, totalRevenue: 0 },
         payments: paymentStats[0] || { totalPayments: 0, totalCollectedRevenue: 0 },
@@ -180,6 +194,69 @@ router.get('/system-stats', async (req, res, next) => {
         total_collected_revenue: Number(paymentStats[0]?.totalCollectedRevenue || 0),
         systemTime: new Date().toISOString(),
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/vehicles
+ * Administrator fleet management: list all vehicles and statuses
+ */
+router.get('/vehicles', async (req, res, next) => {
+  try {
+    const vehicles = await driverService.getAllFleetVehicles();
+    res.status(200).json({
+      success: true,
+      data: vehicles,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/admin/vehicles/:id/status
+ * Administrator fleet management: approve, reject, or activate/deactivate vehicle
+ */
+router.patch('/vehicles/:id/status', async (req, res, next) => {
+  try {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
+      });
+    }
+
+    const { vehicleApprovalStatus, isVehicleActive } = req.body;
+    const updated = await driverService.updateVehicleStatus(driverId, {
+      vehicleApprovalStatus,
+      isVehicleActive,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: updated,
+      message: `Vehicle status for driver ID ${driverId} updated successfully.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/admin/dispatch-failures
+ * Administrator fleet management: view dispatch failure audit log
+ */
+router.get('/dispatch-failures', async (req, res, next) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const failures = await driverService.getDispatchFailures(limit);
+    res.status(200).json({
+      success: true,
+      data: failures,
     });
   } catch (err) {
     next(err);

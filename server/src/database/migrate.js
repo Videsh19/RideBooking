@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { getDbPool } from '../config/db.js';
+import { env } from '../config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,6 +103,61 @@ export async function runMigrations() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    // Cash collection fields are nullable so legacy Cash payment records are not
+    // interpreted as collected when this additive migration is applied.
+    const [cashCollectionStatusCol] = await connection.query(
+      "SHOW COLUMNS FROM payments LIKE 'cash_collection_status'"
+    );
+    if (cashCollectionStatusCol.length === 0) {
+      await connection.query(
+        "ALTER TABLE payments ADD COLUMN cash_collection_status ENUM('OUTSTANDING', 'COLLECTED') NULL DEFAULT NULL AFTER payment_status"
+      );
+    }
+
+    const [cashCollectedAtCol] = await connection.query(
+      "SHOW COLUMNS FROM payments LIKE 'cash_collected_at'"
+    );
+    if (cashCollectedAtCol.length === 0) {
+      await connection.query(
+        'ALTER TABLE payments ADD COLUMN cash_collected_at TIMESTAMP NULL AFTER cash_collection_status'
+      );
+    }
+
+    const [cashCollectorCol] = await connection.query(
+      "SHOW COLUMNS FROM payments LIKE 'cash_collected_by_driver_id'"
+    );
+    if (cashCollectorCol.length === 0) {
+      await connection.query(
+        'ALTER TABLE payments ADD COLUMN cash_collected_by_driver_id INT NULL AFTER cash_collected_at'
+      );
+    }
+
+    const [cashCollectorForeignKey] = await connection.query(
+      `SELECT CONSTRAINT_NAME
+       FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'payments'
+         AND CONSTRAINT_NAME = 'fk_payments_cash_collector'
+       LIMIT 1`
+    );
+    if (cashCollectorForeignKey.length === 0) {
+      await connection.query(
+        `ALTER TABLE payments
+         ADD CONSTRAINT fk_payments_cash_collector
+         FOREIGN KEY (cash_collected_by_driver_id)
+         REFERENCES driver_profiles(driver_id) ON DELETE SET NULL`
+      );
+    }
+
+    const [cashCollectionIndex] = await connection.query(
+      "SHOW INDEX FROM payments WHERE Key_name = 'idx_payment_cash_collection'"
+    );
+    if (cashCollectionIndex.length === 0) {
+      await connection.query(
+        'ALTER TABLE payments ADD INDEX idx_payment_cash_collection (cash_collection_status)'
+      );
+    }
+
     // Ensure ratings table exists
     await connection.query(`
       CREATE TABLE IF NOT EXISTS ratings (
@@ -183,6 +239,10 @@ export async function runMigrations() {
     if (locUpdCol.length === 0) {
       await connection.query("ALTER TABLE driver_profiles ADD COLUMN location_updated_at TIMESTAMP NULL AFTER current_longitude");
     }
+    const [locFixTimestampCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'location_fix_timestamp_ms'");
+    if (locFixTimestampCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN location_fix_timestamp_ms BIGINT UNSIGNED NULL AFTER location_updated_at");
+    }
 
     // Phase 4.5: cancellation_fee column on bookings table (REQ-027)
     const [cancelFeeCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'cancellation_fee'");
@@ -231,52 +291,99 @@ export async function runMigrations() {
       await connection.query("ALTER TABLE bookings ADD INDEX idx_bookings_vehicle_tier (vehicle_tier)");
     }
 
-    // Seed or update standard demo accounts with valid bcrypt hashes
-    const userPassHash = bcrypt.hashSync('Password123!', 10);
-    const adminPassHash = bcrypt.hashSync('AdminPassword123!', 10);
+    // -------------------------------------------------------------------------
+    // Phase 1 Fleet Migrations: vehicle_color, passenger_capacity, vehicle_approval_status, is_vehicle_active
+    // -------------------------------------------------------------------------
+    const [vehCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'vehicle_color'");
+    if (vehCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN vehicle_color VARCHAR(50) DEFAULT 'White' AFTER vehicle_category");
+    }
 
-    // 1. Demo Passenger Rider
-    await connection.query(
-      `INSERT INTO users (user_id, name, phone_no, email, password_hash, role)
-       VALUES (1, 'Videsh Tambe (Rider)', '+91 98200 12345', 'rider@goride.internal', ?, 'RIDER')
-       ON DUPLICATE KEY UPDATE 
-         name = VALUES(name),
-         password_hash = VALUES(password_hash),
-         role = 'RIDER'`,
-      [userPassHash]
-    );
+    const [capCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'passenger_capacity'");
+    if (capCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN passenger_capacity INT NOT NULL DEFAULT 4 AFTER vehicle_color");
+    }
 
-    // 2. Demo Driver Partner
-    await connection.query(
-      `INSERT INTO users (user_id, name, phone_no, email, password_hash, role)
-       VALUES (2, 'Rajesh Kumar (Driver Partner)', '+91 98200 54321', 'driver@goride.internal', ?, 'DRIVER')
-       ON DUPLICATE KEY UPDATE 
-         name = VALUES(name),
-         password_hash = VALUES(password_hash),
-         role = 'DRIVER'`,
-      [userPassHash]
-    );
+    const [vehAppCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'vehicle_approval_status'");
+    if (vehAppCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN vehicle_approval_status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'APPROVED' AFTER passenger_capacity");
+    }
 
-    // Ensure driver profile exists for demo driver (Seeded with STANDARD category)
-    await connection.query(
-      `INSERT INTO driver_profiles (user_id, license_no, vehicle_no, vehicle_model, vehicle_category, rating, is_available, approval_status)
-       VALUES (2, 'MH-01-2022-0045678', 'MH-02-EE-8899', 'Maruti Suzuki Dzire', 'STANDARD', 4.90, TRUE, 'APPROVED')
-       ON DUPLICATE KEY UPDATE 
-         approval_status = 'APPROVED',
-         is_available = TRUE,
-         vehicle_category = COALESCE(vehicle_category, 'STANDARD')`
-    );
+    const [vehActCol] = await connection.query("SHOW COLUMNS FROM driver_profiles LIKE 'is_vehicle_active'");
+    if (vehActCol.length === 0) {
+      await connection.query("ALTER TABLE driver_profiles ADD COLUMN is_vehicle_active BOOLEAN NOT NULL DEFAULT TRUE AFTER vehicle_approval_status");
+    }
 
-    // 3. Demo Pre-provisioned Administrator
+    // Phase 1 Fare Breakdown Persistence
+    const [baseFareCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'base_fare'");
+    if (baseFareCol.length === 0) {
+      await connection.query("ALTER TABLE bookings ADD COLUMN base_fare DECIMAL(10, 2) NULL AFTER total_fare");
+    }
+
+    const [rateKmCol] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'rate_per_km'");
+    if (rateKmCol.length === 0) {
+      await connection.query("ALTER TABLE bookings ADD COLUMN rate_per_km DECIMAL(10, 2) NULL AFTER base_fare");
+    }
+
+    // Phase 1 Dispatch Failures Table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS dispatch_failures (
+        failure_id INT AUTO_INCREMENT PRIMARY KEY,
+        booking_id INT NOT NULL,
+        reason VARCHAR(255) NOT NULL,
+        failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE,
+        INDEX idx_dispatch_failure_booking (booking_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    if (!env.isProduction) {
+      // Seed demo identities only in development and test databases.
+      const userPassHash = bcrypt.hashSync('Password123!', 10);
+
+      await connection.query(
+        `INSERT INTO users (user_id, name, phone_no, email, password_hash, role)
+         VALUES (1, 'Videsh Tambe (Rider)', '+91 98200 12345', 'rider@goride.internal', ?, 'RIDER')
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           password_hash = VALUES(password_hash),
+           role = 'RIDER'`,
+        [userPassHash]
+      );
+
+      await connection.query(
+        `INSERT INTO users (user_id, name, phone_no, email, password_hash, role)
+         VALUES (2, 'Rajesh Kumar (Driver Partner)', '+91 98200 54321', 'driver@goride.internal', ?, 'DRIVER')
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           password_hash = VALUES(password_hash),
+           role = 'DRIVER'`,
+        [userPassHash]
+      );
+
+      await connection.query(
+        `INSERT INTO driver_profiles (user_id, license_no, vehicle_no, vehicle_model, vehicle_category, rating, is_available, approval_status)
+         VALUES (2, 'MH-01-2022-0045678', 'MH-02-EE-8899', 'Maruti Suzuki Dzire', 'STANDARD', 4.90, TRUE, 'APPROVED')
+         ON DUPLICATE KEY UPDATE
+           approval_status = 'APPROVED',
+           is_available = TRUE,
+           vehicle_category = COALESCE(vehicle_category, 'STANDARD')`
+      );
+    }
+
+    const adminPassHash = bcrypt.hashSync(env.adminInitialPassword, 10);
     await connection.query(
-      `INSERT INTO users (user_id, name, phone_no, email, password_hash, role)
-       VALUES (3, 'GoRide Fleet Administrator', '+91 98200 99999', 'admin@goride.internal', ?, 'ADMIN')
-       ON DUPLICATE KEY UPDATE 
-         name = VALUES(name),
-         password_hash = VALUES(password_hash),
-         role = 'ADMIN'`,
+      `INSERT INTO users (name, phone_no, email, password_hash, role)
+       VALUES ('GoRide Fleet Administrator', '+91 98200 99999', 'admin@goride.internal', ?, 'ADMIN')
+       ON DUPLICATE KEY UPDATE user_id = LAST_INSERT_ID(user_id)`,
       [adminPassHash]
     );
+    const [adminRows] = await connection.query(
+      `SELECT role FROM users WHERE email = 'admin@goride.internal' LIMIT 1`
+    );
+    if (adminRows.length !== 1 || adminRows[0].role !== 'ADMIN') {
+      throw new Error('The seeded administrator email conflicts with a non-admin account.');
+    }
 
     return {
       success: true,
