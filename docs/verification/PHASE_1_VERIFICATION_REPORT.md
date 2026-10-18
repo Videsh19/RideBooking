@@ -147,3 +147,69 @@ the disposable target.
 PARTIALLY VERIFIED. Current source checks and database-independent tests passed.
 Database-backed dispatch and category behavior has not been verified in this
 session.
+
+## Final isolated integration verification addendum — 2026-10-18
+
+This later addendum supersedes the earlier snapshot above that said no
+database-backed integration tests had been run.
+
+### Implementation and files
+The Phase 1 implementation in `6701ff4` includes driver eligibility,
+category-aware dispatch, assignment authorization, and migration/schema
+support. That commit modified
+`server/src/services/driverService.js`,
+`server/src/services/bookingService.js`, `server/src/routes/driverRoutes.js`,
+`server/src/routes/bookingRoutes.js`, `server/src/database/schema.sql`,
+`server/src/database/migrate.js`, and `client/src/pages/DriverDashboardPage.jsx`;
+it added `server/test_dispatch_authorization.mjs`. No files were deleted in
+that implementation commit. This verification modified only
+`server/test_dispatch_concurrency.mjs` and `server/test_phase4.mjs` to include
+the required fresh `fixTimestampMs` in location-update fixtures.
+
+### Database, migrations, and safety
+MySQL `8.0.43` was running. A read-only connection resolved to the existing
+`goride_db`; its 10 schema-defined tables, columns, indexes, and named
+constraints matched `schema.sql`. No DDL or DML was applied to
+`goride_db`.
+
+`goride_test_db` was absent and empty before this run. It was created for this
+verification, then the API startup migration was run against it only. The
+post-migration database contained 10 tables. A dedicated runner account was
+granted privileges only on that schema, used for the API and tests, and
+removed afterwards. The test database and test records were retained.
+
+Ports 5000 and 5001 were already occupied and were left untouched. The test
+API used an available local port; a temporary Node fetch import redirected
+the older suites' hardcoded `localhost:5000` calls to that API. The
+Cash-collection test used `GORIDE_TEST_API_URL` for the same API.
+
+### Integration results
+- `test_phase3_p1.mjs`: 20 passed, 0 failed.
+- `test_phase3_p2.mjs`: 34 passed, 0 failed; includes completed-trip ledger
+  ownership and gross completed-fare consistency.
+- `test_vehicle_categories.mjs`: 36 passed, 0 failed.
+- `test_dispatch_concurrency.mjs`: first attempt exited 1 because its location
+  fixture omitted `fixTimestampMs`; after correcting the fixture, rerun exited
+  0 and its duplicate-active-assignment invariant passed.
+- `test_phase4.mjs`: first attempt exited 1 at location telemetry for the same
+  missing fixture field; after correcting it, rerun reported 52 passed,
+  0 failed, including nearest-driver assignment.
+
+Across these Phase 1-focused suites, each final rerun passed. The two initial
+failures were stale test inputs, not failures of the location validation
+contract. Their fixture corrections are included in the current work.
+
+### Regression checks and build
+`test_dispatch_authorization.mjs`, `test_booking_payment_join.mjs`,
+`test_id_validation.mjs`, `test_payment_safety.mjs`,
+`test_production_secret_config.mjs`, and the client Cash display test exited
+successfully. `test_rating_validation.mjs` reported 2 passed, 0 failed.
+Syntax checks for all server sources and test scripts passed. The client
+production build passed (Vite).
+
+### Manual verification and acceptance
+No browser/manual driver approval, vehicle activation, GPS permission, map,
+or real-device reassignment test was performed. The isolated API suites
+verified backend workflows only. Phase 1 automated dispatch/category
+integration: PASS. Manual UX and real-device location behavior: NOT TESTED.
+Overall Phase 1: PARTIALLY VERIFIED, not a full manual acceptance.

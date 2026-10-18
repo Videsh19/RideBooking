@@ -91,7 +91,11 @@ async function main() {
     const location = await request('/driver/location', {
       method: 'PATCH',
       headers: { ...auth(driverToken), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ latitude: 18.9220, longitude: 72.8347 }),
+      body: JSON.stringify({
+        latitude: 18.9220,
+        longitude: 72.8347,
+        fixTimestampMs: Date.now(),
+      }),
     });
     if (location.status !== 200) {
       throw new Error(`Could not set test driver location: ${JSON.stringify(location.data)}`);

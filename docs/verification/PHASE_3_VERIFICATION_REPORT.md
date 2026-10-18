@@ -125,3 +125,92 @@ electronic payments.
 PARTIALLY VERIFIED. Database-independent regressions, source checks, syntax
 checks, and the client build passed. Runtime database behavior and the
 database-mutating integration test remain unverified.
+
+## Final isolated integration verification addendum — 2026-10-18
+
+This later addendum supersedes the earlier snapshot above that said the Cash
+integration test and other database-backed behavior had not been run.
+
+### Implementation and files
+The Phase 3 implementation in `6701ff4` modified
+`server/src/services/paymentService.js`,
+`server/src/services/bookingService.js`,
+`server/src/routes/paymentRoutes.js`,
+`server/src/routes/driverRoutes.js`, `server/src/database/schema.sql`,
+`server/src/database/migrate.js`, and the admin/rider/driver dashboards. It
+added `client/src/utils/cashCollectionDisplay.js`,
+`server/src/utils/paymentConsistency.js`, `server/src/utils/paymentDisplay.js`,
+and database-independent payment/display regressions. No files were deleted
+in that implementation commit. The only source-tree edits in this
+verification were test fixture updates in `server/test_phase4.mjs` and
+`server/test_dispatch_concurrency.mjs`; the protected untracked
+`server/test_cash_collection.mjs` was executed but not modified.
+
+### Database, migration, and isolation
+The MySQL service was `8.0.43`. Read-only metadata inspection found all 10
+schema-defined tables and no missing schema-defined columns, indexes, or named
+constraints in either `goride_db` or `goride_test_db`; the three Cash
+collection fields were present. The application-configured/effective database
+was `goride_db`, and it received no DDL or DML.
+
+The previously absent `goride_test_db` was created for this run. API startup
+ran the project migrations only against that isolated database; 10 tables
+were present before test execution. The API and direct-SQL tests used a
+temporary account scoped to `goride_test_db`; that account was removed after
+the API stopped. The test database and test records were retained. No
+historical cash rows in `goride_db` were backfilled or otherwise changed.
+
+Ports 5000 and 5001 were occupied and left untouched. The test API used a
+separately selected local port. A temporary Node fetch import routed the
+legacy suites' hardcoded port-5000 requests to the isolated API. The
+Cash-collection integration script used its required `GORIDE_TEST_API_URL`
+value to target that same test-only API.
+
+### Integration results
+- `test_phase3_p3.mjs`: 52 passed, 0 failed; simulated payment failure and
+  successful payment/booking status assertions passed.
+- `test_cash_collection.mjs`: executed and exited 0. Its assertions verified
+  Cash begins outstanding, an unassigned driver is rejected, client-supplied
+  timestamp/collector values do not spoof the stored record, the response and
+  booking expose the same stored collection timestamp, a Cash refund is
+  rejected without erasing collector history, and sequential duplicate
+  collection is rejected. This script does not print an assertion count.
+- `test_phase4.mjs`: first attempt exited 1 at location telemetry because its
+  request omitted `fixTimestampMs`; the corrected fixture rerun reported 52
+  passed, 0 failed. Its admin refund authorization, successful simulated
+  refund, duplicate refund rejection, and revenue-report assertions passed.
+- `test_phase3_p2.mjs`: 34 passed, 0 failed; driver completed-fare total
+  matched completed trips. This is gross fare aggregation, not a commission
+  deduction test.
+- `test_phase3_p1.mjs`: 20 passed, 0 failed.
+- `test_vehicle_categories.mjs`: 36 passed, 0 failed.
+- `test_dispatch_concurrency.mjs`: initially failed because its test location
+  omitted `fixTimestampMs`; corrected rerun exited 0 and passed its
+  assignment-duplication invariant.
+
+Across the seven integration scripts, five passed on their first execution;
+the two stale location fixtures failed once and passed when rerun after the
+test-only correction. Final state: all seven suites passed. No application
+payment-service or authorization behavior was changed in response to those
+fixture failures.
+
+### Regression checks and build
+Production-secret normalization, payment safety, strict IDs, booking/payment
+joins, dispatch authorization, and client Cash display regressions all exited
+successfully. Rating validation reported 2 passed, 0 failed. Syntax checks for
+all server source and test files passed. The client production build passed.
+
+### Security, limits, and manual checks
+No browser or manual real-cash observation was performed. No actual electronic
+payment or funds transfer occurred; UPI/Card and refunds in these workflows
+are simulated. The legacy NULL-status Cash UI helper and booking query were
+verified by database-independent regressions, but this integration run did
+not create a historical NULL-status Cash row. The Cash duplicate check is
+sequential; simultaneous multi-request collection remains UNVERIFIED. No
+partial/excess-refund-amount behavior or commission deduction was exercised;
+driver totals report gross completed fares.
+
+Phase 3 isolated API/database integration: PASS for the scenarios covered
+above. Legacy-row runtime behavior, true concurrent Cash collection, manual
+UI behavior, and real-world money movement: NOT TESTED or NOT APPLICABLE.
+Overall Phase 3: PARTIALLY VERIFIED, not a full production-money acceptance.

@@ -359,7 +359,11 @@ async function runPhase4Tests() {
     const locRes = await fetch(`${BASE_URL}/driver/location`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${dToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ latitude: 18.9220, longitude: 72.8347 }),
+      body: JSON.stringify({
+        latitude: 18.9220,
+        longitude: 72.8347,
+        fixTimestampMs: Date.now(),
+      }),
     });
     const locData = await locRes.json();
     assert(locRes.status === 200, 'Driver location telemetry recorded (HTTP 200)');

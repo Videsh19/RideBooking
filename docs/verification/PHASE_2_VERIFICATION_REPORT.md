@@ -96,3 +96,69 @@ database target.
 PARTIALLY VERIFIED. Source-level protections, database-independent
 regressions, syntax checks, and the frontend build passed. Database-backed
 Phase 2 behavior is not verified.
+
+## Final isolated integration verification addendum — 2026-10-18
+
+This later addendum supersedes the earlier snapshot above that said no
+database-backed integration tests had been run.
+
+### Implementation and files
+The Phase 2 implementation represented in `6701ff4` modified
+`server/src/controllers/bookingController.js`,
+`server/src/routes/bookingRoutes.js`, `server/src/routes/driverRoutes.js`,
+`server/src/services/bookingService.js`, `server/src/services/driverService.js`,
+`server/src/database/schema.sql`, `server/src/database/migrate.js`,
+`client/src/pages/RiderDashboardPage.jsx`, and
+`client/src/pages/DriverDashboardPage.jsx`; it added
+`server/test_booking_payment_join.mjs`. No files were deleted in the
+implementation commit. This verification updated the location request in
+`server/test_phase4.mjs` and `server/test_dispatch_concurrency.mjs` to send
+the required fresh `fixTimestampMs`.
+
+### Database, migration, and isolation
+Read-only metadata checks found all 10 schema-defined tables and no missing
+schema-defined columns, indexes, or named constraints in `goride_db` or the
+isolated `goride_test_db`. The configured MySQL service was `8.0.43`.
+`goride_db` received no DDL or DML. The previously absent `goride_test_db`
+was created for this run; API startup applied the project migration there and
+the migrated schema contained 10 tables. The dedicated database-scoped test
+account was removed after testing; test records and database were retained.
+
+Ports 5000 and 5001 were occupied by pre-existing listeners. They were not
+stopped or reused. The test API ran on a separately selected local port, and a
+temporary fetch import routed the legacy test scripts' hardcoded port-5000
+requests to it. Direct SQL test clients inherited the same test-only database
+configuration.
+
+### Integration results
+- `test_phase3_p1.mjs`: 20 passed, 0 failed.
+- `test_phase3_p2.mjs`: 34 passed, 0 failed; lifecycle, rider/driver history,
+  ledger isolation, and gross-fare aggregation assertions passed.
+- `test_phase3_p3.mjs`: 52 passed, 0 failed.
+- `test_phase4.mjs`: first run exited 1 because its location request omitted
+  `fixTimestampMs`; after updating the test fixture, rerun reported 52 passed,
+  0 failed. The rerun covered cancellation, location telemetry, nearest-driver
+  assignment, refunds, and admin revenue reporting.
+- `test_vehicle_categories.mjs`: 36 passed, 0 failed.
+- `test_dispatch_concurrency.mjs`: initial request failed validation because
+  the fixture omitted `fixTimestampMs`; corrected rerun exited 0 and passed
+  its no-duplicate-active-assignment invariant.
+- `test_cash_collection.mjs`: executed against the isolated API and exited 0.
+
+The two initial fixture failures and their successful reruns are both recorded;
+the current fixture changes are in the worktree.
+
+### Regression checks and build
+Booking/payment join, dispatch authorization, strict ID, production-secret,
+payment-safety, and client Cash display regression scripts exited
+successfully. Rating tests reported 2 passed, 0 failed. Syntax checks for all
+server source and test files passed. `npm run build` in `client` passed.
+
+### Manual verification and acceptance
+No manual browser session or real-device GPS permission, stale-location,
+ETA-fallback, notification, cancellation, or live tracking UX test was
+performed. The API-backed lifecycle and location assertions above passed in
+the isolated environment, but they do not verify device permissions, map
+rendering, notification delivery, or network conditions. Automated API
+integration: PASS. Manual UX/device behavior: NOT TESTED. Overall Phase 2:
+PARTIALLY VERIFIED.
