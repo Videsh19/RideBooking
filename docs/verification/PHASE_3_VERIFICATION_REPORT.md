@@ -227,3 +227,15 @@ Overall Phase 3: PARTIALLY VERIFIED, not a full production-money acceptance.
 The verification and test-fixture update commit was `e8210a1` on branch
 `akshay`; it was pushed successfully to `origin/akshay`. No changes were
 pushed to `main`.
+
+### Final repository check — 2026-10-18
+The later MySQL privilege-risk report update was committed as `316b192` and
+pushed to `origin/akshay`. Database-independent regressions, server/test
+syntax checks, the client build, and `git diff --check` were rerun after that
+delivery and passed. The isolated payment/refund/Cash integration results
+above remain the executed results; they were not rerun because no application
+source or test fixtures changed afterwards. The final read-only connection
+probe continued to resolve to `goride_db`; no migration or test write was
+run against it. Overall assessment remains PARTIALLY VERIFIED due to the
+unverified legacy-NULL row on a live database, true concurrent Cash
+collection, and manual UI/real-money behavior.
