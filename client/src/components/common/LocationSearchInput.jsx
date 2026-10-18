@@ -19,8 +19,10 @@ export default function LocationSearchInput({
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [searchMessage, setSearchMessage] = useState('');
   const wrapperRef = useRef(null);
   const debounceTimerRef = useRef(null);
+  const searchGenerationRef = useRef(0);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -33,9 +35,15 @@ export default function LocationSearchInput({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => () => {
+    searchGenerationRef.current += 1;
+    clearTimeout(debounceTimerRef.current);
+  }, []);
+
   // Fetch suggestions with debouncing
   const handleInputChange = (e) => {
     const text = e.target.value;
+    const searchGeneration = ++searchGenerationRef.current;
     onChangeText(text);
 
     if (debounceTimerRef.current) {
@@ -46,38 +54,55 @@ export default function LocationSearchInput({
       setSuggestions([]);
       setIsOpen(false);
       setLoading(false);
+      setSearchMessage('');
       return;
     }
 
+    setSuggestions([]);
+    setIsOpen(false);
     setLoading(true);
+    setSearchMessage('');
     debounceTimerRef.current = setTimeout(async () => {
       try {
         const res = await fetch(`${apiBaseUrl}/bookings/places?q=${encodeURIComponent(text.trim())}`);
-        if (res.ok) {
-          const json = await res.json();
-          setSuggestions(json.data || []);
-          setIsOpen((json.data || []).length > 0);
-        } else {
-          setSuggestions([]);
+        const json = await res.json();
+        if (searchGeneration !== searchGenerationRef.current) return;
+        if (!res.ok || !json.success) {
+          throw new Error(json.error?.message || 'Location search is temporarily unavailable.');
         }
-      } catch (err) {
+        const results = Array.isArray(json.data) ? json.data : [];
+        setSuggestions(results);
+        setIsOpen(true);
+        setSearchMessage(results.length === 0 ? 'No matching locations found. Try a nearby landmark.' : '');
+      } catch (error) {
+        if (searchGeneration !== searchGenerationRef.current) return;
         setSuggestions([]);
+        setIsOpen(true);
+        setSearchMessage(error.message || 'Location search is temporarily unavailable.');
       } finally {
-        setLoading(false);
+        if (searchGeneration === searchGenerationRef.current) setLoading(false);
       }
     }, 280);
   };
 
   const handleSelectSuggestion = (place) => {
+    searchGenerationRef.current += 1;
+    clearTimeout(debounceTimerRef.current);
+    setLoading(false);
     setIsOpen(false);
     setSuggestions([]);
+    setSearchMessage('');
     onSelectPlace(place);
   };
 
   const handleClear = () => {
+    searchGenerationRef.current += 1;
+    clearTimeout(debounceTimerRef.current);
+    setLoading(false);
     onChangeText('');
     setSuggestions([]);
     setIsOpen(false);
+    setSearchMessage('');
     onSelectPlace(null);
   };
 
@@ -103,7 +128,7 @@ export default function LocationSearchInput({
           value={value}
           onChange={handleInputChange}
           onFocus={() => {
-            if (suggestions.length > 0) setIsOpen(true);
+            if (suggestions.length > 0 || searchMessage) setIsOpen(true);
           }}
           placeholder={placeholder}
           required={required}
@@ -131,10 +156,10 @@ export default function LocationSearchInput({
       </div>
 
       {/* Autocomplete Suggestions Popup */}
-      {isOpen && suggestions.length > 0 && (
+      {isOpen && (suggestions.length > 0 || searchMessage) && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-theme-card border border-theme-border rounded-lg shadow-2xl overflow-hidden max-h-64 overflow-y-auto divide-y divide-theme-border/60">
           <div className="px-3 py-1.5 bg-theme-surface/60 text-[10px] font-medium text-theme-text-secondary uppercase tracking-wider flex items-center justify-between">
-            <span>Verified MMR Places ({suggestions.length})</span>
+            <span>{suggestions.length ? `Verified MMR Places (${suggestions.length})` : 'Location Search'}</span>
             <span>OSM / Road Network</span>
           </div>
           {suggestions.map((item) => (
@@ -159,6 +184,11 @@ export default function LocationSearchInput({
               </Badge>
             </div>
           ))}
+          {searchMessage && (
+            <p className="px-3.5 py-2.5 text-xs text-theme-text-secondary">
+              {searchMessage}
+            </p>
+          )}
         </div>
       )}
 

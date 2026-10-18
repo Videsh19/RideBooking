@@ -42,6 +42,9 @@ const getRoutePositions = (geometry) => {
 
 function MapViewport({ positions }) {
   const map = useMap();
+  const positionsKey = positions
+    .map(([latitude, longitude]) => `${latitude},${longitude}`)
+    .join(';');
 
   useEffect(() => {
     if (positions.length > 1) {
@@ -49,20 +52,26 @@ function MapViewport({ positions }) {
     } else if (positions.length === 1) {
       map.setView(positions[0], 15);
     }
-  }, [map, positions]);
+  }, [map, positionsKey]);
 
   return null;
 }
 
 export default function LiveRideMap({
   driverCoordinates = null,
+  pickupCoordinates = null,
+  destinationCoordinates = null,
   routeGeometry = null,
   className = '',
 }) {
   const driverPosition = getDriverPosition(driverCoordinates);
+  const pickupPosition = getDriverPosition(pickupCoordinates);
+  const destinationPosition = getDriverPosition(destinationCoordinates);
   const routePositions = getRoutePositions(routeGeometry);
   const mapPositions = [
     ...(driverPosition ? [driverPosition] : []),
+    ...(pickupPosition ? [pickupPosition] : []),
+    ...(destinationPosition ? [destinationPosition] : []),
     ...routePositions,
   ];
 
@@ -80,7 +89,7 @@ export default function LiveRideMap({
   }
 
   return (
-    <div className={`h-72 w-full overflow-hidden rounded-lg border border-theme-border sm:h-80 ${className}`}>
+    <div className={`isolate h-72 w-full overflow-hidden rounded-lg border border-theme-border sm:h-80 ${className}`}>
       <MapContainer
         center={mapPositions[0]}
         zoom={13}
@@ -96,6 +105,20 @@ export default function LiveRideMap({
           <Polyline
             positions={routePositions}
             pathOptions={{ color: '#8B5CF6', weight: 5, opacity: 0.85 }}
+          />
+        )}
+        {pickupPosition && (
+          <CircleMarker
+            center={pickupPosition}
+            radius={8}
+            pathOptions={{ color: '#FFFFFF', weight: 2, fillColor: '#10B981', fillOpacity: 1 }}
+          />
+        )}
+        {destinationPosition && (
+          <CircleMarker
+            center={destinationPosition}
+            radius={8}
+            pathOptions={{ color: '#FFFFFF', weight: 2, fillColor: '#F97316', fillOpacity: 1 }}
           />
         )}
         {driverPosition && (
