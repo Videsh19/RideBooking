@@ -2,8 +2,8 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getDbPool } from '../config/db.js';
+import { env } from '../config/env.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'goride_development_secret_key_change_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 /**
@@ -18,7 +18,7 @@ export function generateToken(user) {
       name: user.name,
       tokenVersion: user.token_version || 1,
     },
-    JWT_SECRET,
+    env.jwtSecret,
     { expiresIn: JWT_EXPIRES_IN }
   );
 }
@@ -387,7 +387,7 @@ export async function requestPasswordReset(email) {
   );
 
   // In development environments without real SMTP delivery, include development token
-  if (process.env.NODE_ENV !== 'production') {
+  if (!env.isProduction) {
     return {
       ...genericResponse,
       devResetToken: rawToken,

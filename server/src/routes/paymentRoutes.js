@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware.js';
 import * as paymentService from '../services/paymentService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 const router = Router();
 
@@ -123,13 +124,13 @@ router.get('/admin/all', requireRole(['ADMIN']), async (req, res, next) => {
  */
 router.post('/:id/refund', requireRole(['ADMIN']), async (req, res, next) => {
   try {
-    const paymentId = parseInt(req.params.id, 10);
+    const paymentId = parsePositiveIntegerId(req.params.id);
     const { reason = 'Administrative refund requested' } = req.body || {};
 
-    if (isNaN(paymentId)) {
+    if (paymentId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Payment ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Payment ID must be a positive integer.' },
       });
     }
 

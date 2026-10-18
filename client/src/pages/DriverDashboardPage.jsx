@@ -30,6 +30,7 @@ import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
 import EmptyState from '../components/common/EmptyState';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { getCashCollectionDisplayStatus } from '../utils/cashCollectionDisplay';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -412,6 +413,29 @@ export default function DriverDashboardPage() {
     }
   };
 
+  const handleCollectCash = async (bookingId) => {
+    try {
+      setActionLoadingId(`collect-cash-${bookingId}`);
+      const res = await fetch(`${API_BASE_URL}/driver/rides/${bookingId}/cash-collection`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        alert(json.error?.message || 'Failed to confirm cash collection.');
+      } else {
+        await fetchDriverData();
+      }
+    } catch (err) {
+      alert(`Cash collection confirmation failed: ${err.message}`);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout
@@ -466,7 +490,7 @@ export default function DriverDashboardPage() {
           {/* Submitted Documentation Summary */}
           <Card
             title="Submitted Partner Credentials"
-            subtitle="Verified relational records in goride_db.driver_profiles"
+            subtitle="Verified relational records in the configured database"
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="p-3 rounded-lg border border-theme-border bg-theme-surface/40">
@@ -644,13 +668,13 @@ export default function DriverDashboardPage() {
               <span className="text-xs text-theme-text-secondary">rides</span>
             </div>
             <p className="text-[10px] text-theme-text-secondary mt-1">
-              Persisted in goride_db.bookings
+              Persisted in the configured database
             </p>
           </Card>
 
           <Card padding="p-4">
             <span className="text-[11px] font-medium text-theme-text-secondary block">
-              Total Ride Earnings
+              Completed Ride Fares (Gross)
             </span>
             <div className="flex items-baseline gap-2 mt-2">
               <span className="text-2xl font-bold text-emerald-400">
@@ -658,7 +682,7 @@ export default function DriverDashboardPage() {
               </span>
             </div>
             <p className="text-[10px] text-theme-text-secondary mt-1">
-              Real completed fare sum from MySQL
+              Completed fare total; not cash received or net driver payout
             </p>
           </Card>
         </div>
@@ -903,7 +927,32 @@ export default function DriverDashboardPage() {
                             ₹{t.total_fare}
                           </td>
                           <td className="py-2.5">
-                            {t.payment_status === 'PAID' ? (
+                            {getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'OUTSTANDING' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge variant="warning" size="sm">CASH OUTSTANDING</Badge>
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  onClick={() => handleCollectCash(t.booking_id)}
+                                  disabled={actionLoadingId === `collect-cash-${t.booking_id}`}
+                                >
+                                  {actionLoadingId === `collect-cash-${t.booking_id}`
+                                    ? 'Confirming...'
+                                    : 'Confirm Cash Collected'}
+                                </Button>
+                              </div>
+                            ) : getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'COLLECTED' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge variant="success" size="sm">CASH COLLECTED</Badge>
+                                <span className="text-[10px] text-theme-text-secondary">
+                                  {t.cash_collected_at
+                                    ? new Date(t.cash_collected_at).toLocaleString()
+                                    : '--'}
+                                </span>
+                              </div>
+                            ) : getCashCollectionDisplayStatus(t.payment_method, t.cash_collection_status) === 'UNVERIFIED' ? (
+                              <Badge variant="warning" size="sm">CASH COLLECTION UNVERIFIED</Badge>
+                            ) : t.payment_status === 'PAID' ? (
                               <Badge variant="success" size="sm">PAID</Badge>
                             ) : (
                               <Badge variant="warning" size="sm">PENDING</Badge>

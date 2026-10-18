@@ -949,6 +949,10 @@ export async function getBookingById(bookingId) {
        loc_d.longitude AS dest_longitude,
        pay.payment_id,
        pay.payment_method,
+       pay.payment_status AS transaction_payment_status,
+       pay.cash_collection_status,
+       pay.cash_collected_at,
+       pay.cash_collected_by_driver_id,
        pay.transaction_id,
        pay.payment_date,
        rat.rating_id,
@@ -962,7 +966,32 @@ export async function getBookingById(bookingId) {
      LEFT JOIN routes r ON b.route_id = r.route_id
      LEFT JOIN locations loc_p ON r.pickup_location_id = loc_p.location_id
      LEFT JOIN locations loc_d ON r.dest_location_id = loc_d.location_id
-     LEFT JOIN payments pay ON b.booking_id = pay.booking_id AND pay.payment_status = 'SUCCESS'
+     LEFT JOIN payments pay ON pay.payment_id = (
+       SELECT candidate.payment_id
+       FROM payments candidate
+       WHERE candidate.booking_id = b.booking_id
+         AND (
+           candidate.payment_status = 'SUCCESS'
+           OR (
+             candidate.payment_method = 'Cash'
+             AND (
+               candidate.cash_collection_status = 'OUTSTANDING'
+               OR candidate.cash_collection_status IS NULL
+             )
+           )
+         )
+       ORDER BY (
+                  candidate.payment_method = 'Cash'
+                  AND (
+                    candidate.cash_collection_status = 'OUTSTANDING'
+                    OR candidate.cash_collection_status IS NULL
+                  )
+                ) DESC,
+                (candidate.payment_status = 'SUCCESS') DESC,
+                candidate.payment_date DESC,
+                candidate.payment_id DESC
+       LIMIT 1
+     )
      LEFT JOIN ratings rat ON b.booking_id = rat.booking_id
      WHERE b.booking_id = ?`,
     [bookingId]
@@ -1155,6 +1184,10 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
        loc_d.longitude AS dest_longitude,
        pay.payment_id,
        pay.payment_method,
+       pay.payment_status AS transaction_payment_status,
+       pay.cash_collection_status,
+       pay.cash_collected_at,
+       pay.cash_collected_by_driver_id,
        pay.transaction_id,
        pay.payment_date,
        rat.rating_id,
@@ -1167,7 +1200,32 @@ export async function listBookings({ userId = 1, limit = 20, offset = 0 } = {}) 
      LEFT JOIN routes r ON b.route_id = r.route_id
      LEFT JOIN locations loc_p ON r.pickup_location_id = loc_p.location_id
      LEFT JOIN locations loc_d ON r.dest_location_id = loc_d.location_id
-     LEFT JOIN payments pay ON b.booking_id = pay.booking_id AND pay.payment_status = 'SUCCESS'
+     LEFT JOIN payments pay ON pay.payment_id = (
+       SELECT candidate.payment_id
+       FROM payments candidate
+       WHERE candidate.booking_id = b.booking_id
+         AND (
+           candidate.payment_status = 'SUCCESS'
+           OR (
+             candidate.payment_method = 'Cash'
+             AND (
+               candidate.cash_collection_status = 'OUTSTANDING'
+               OR candidate.cash_collection_status IS NULL
+             )
+           )
+         )
+       ORDER BY (
+                  candidate.payment_method = 'Cash'
+                  AND (
+                    candidate.cash_collection_status = 'OUTSTANDING'
+                    OR candidate.cash_collection_status IS NULL
+                  )
+                ) DESC,
+                (candidate.payment_status = 'SUCCESS') DESC,
+                candidate.payment_date DESC,
+                candidate.payment_id DESC
+       LIMIT 1
+     )
      LEFT JOIN ratings rat ON b.booking_id = rat.booking_id
      WHERE b.user_id = ?
      ORDER BY b.booking_date DESC

@@ -26,6 +26,7 @@ import Card from '../components/common/Card';
 import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { getCashCollectionDisplayStatus } from '../utils/cashCollectionDisplay';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -341,14 +342,14 @@ export default function AdminDashboardPage() {
 
           <Card padding="p-4">
             <div className="flex items-center justify-between text-theme-text-secondary text-xs">
-              <span>Settled Revenue</span>
+              <span>Recorded Successful Payments</span>
               <CreditCard className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="mt-2 text-2xl font-bold text-emerald-400 font-mono">
               ₹{Number(stats?.payments?.totalCollectedRevenue || 0).toLocaleString()}
             </div>
             <p className="text-[10px] text-theme-text-secondary mt-1">
-              {stats?.payments?.totalPayments || 0} simulated payments
+              Simulated electronic payments and confirmed Cash; excludes refunds
             </p>
           </Card>
         </div>
@@ -479,7 +480,7 @@ export default function AdminDashboardPage() {
         {/* 2. Real User Registry Table from MySQL */}
         <Card
           title="User Role Registry & Authorization Ledger"
-          subtitle="Real-time relational user records from goride_db.users"
+          subtitle="Real-time relational user records from the configured database"
         >
           {loading ? (
             <div className="py-8 flex justify-center">
@@ -564,7 +565,7 @@ export default function AdminDashboardPage() {
         {/* 3. Payment Ledger & Financial Audit Table (UML: Payment.refundPayment()) */}
         <Card
           title="Payment Oversight & Administrative Refunds"
-          subtitle="Real-time transaction settlement and academic simulated refunds ledger"
+          subtitle="Recorded simulated electronic payments, Cash collections, and simulated refunds"
         >
           {loading ? (
             <div className="py-8 flex justify-center">
@@ -581,7 +582,7 @@ export default function AdminDashboardPage() {
                   Total Transactions: <strong className="text-theme-text">{paymentSummary?.totalTransactions || paymentsList.length}</strong>
                 </span>
                 <span>
-                  Settled Revenue: <strong className="text-emerald-400">₹{Number(paymentSummary?.totalSettledRevenue || 0).toFixed(2)}</strong>
+                  Successful Payments: <strong className="text-emerald-400">₹{Number(paymentSummary?.totalSettledRevenue || 0).toFixed(2)}</strong>
                 </span>
                 {paymentSummary?.totalRefundedAmount > 0 && (
                   <span>
@@ -636,6 +637,41 @@ export default function AdminDashboardPage() {
                         >
                           {pay.payment_status}
                         </Badge>
+                        {pay.payment_method === 'Cash' && (
+                          <div className="mt-1">
+                            <Badge
+                              variant={
+                                getCashCollectionDisplayStatus(
+                                  pay.payment_method,
+                                  pay.cash_collection_status
+                                ) === 'COLLECTED'
+                                  ? 'success'
+                                  : 'warning'
+                              }
+                              size="sm"
+                            >
+                              {getCashCollectionDisplayStatus(
+                                pay.payment_method,
+                                pay.cash_collection_status
+                              ) === 'COLLECTED'
+                                ? 'CASH COLLECTED'
+                                : getCashCollectionDisplayStatus(
+                                    pay.payment_method,
+                                    pay.cash_collection_status
+                                  ) === 'OUTSTANDING'
+                                ? 'CASH OUTSTANDING'
+                                : 'CASH COLLECTION UNVERIFIED'}
+                            </Badge>
+                            {pay.cash_collected_at && (
+                              <span className="block mt-1 text-[10px] text-theme-text-secondary">
+                                {new Date(pay.cash_collected_at).toLocaleString()}
+                                {pay.cash_collected_by_driver_id
+                                  ? ` · Driver ${pay.cash_collected_by_driver_id}`
+                                  : ''}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 font-mono text-[10px] text-theme-text-secondary">
                         <div>{pay.transaction_id}</div>
@@ -644,7 +680,7 @@ export default function AdminDashboardPage() {
                         )}
                       </td>
                       <td className="py-3 text-right">
-                        {pay.payment_status === 'SUCCESS' ? (
+                        {pay.payment_status === 'SUCCESS' && pay.payment_method !== 'Cash' ? (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -653,10 +689,14 @@ export default function AdminDashboardPage() {
                             className="text-rose-400 hover:text-rose-300 border-rose-800/40"
                           >
                             <RefreshCw className="w-3 h-3 mr-1" />
-                            {actionPaymentId === pay.payment_id ? 'Refunding...' : 'Refund'}
+                            {actionPaymentId === pay.payment_id ? 'Recording...' : 'Record Simulated Refund'}
                           </Button>
+                        ) : pay.payment_status === 'SUCCESS' && pay.payment_method === 'Cash' ? (
+                          <span className="text-[10px] text-theme-text-secondary italic">
+                            Cash is not refundable through the simulated flow
+                          </span>
                         ) : pay.payment_status === 'REFUND' ? (
-                          <span className="text-[10px] text-rose-400 italic">Refunded</span>
+                          <span className="text-[10px] text-rose-400 italic">Simulated refund recorded</span>
                         ) : (
                           <span className="text-[10px] text-theme-text-secondary italic">N/A</span>
                         )}

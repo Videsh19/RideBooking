@@ -1,4 +1,5 @@
 import { getDbPool } from '../config/db.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 export function validateRating(rating) {
   if (
@@ -29,9 +30,9 @@ export async function submitRating({
   rating,
   comments = null,
 }) {
-  const numericBookingId = parseInt(bookingId, 10);
-  if (isNaN(numericBookingId)) {
-    throw { statusCode: 400, code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' };
+  const numericBookingId = parsePositiveIntegerId(bookingId);
+  if (numericBookingId === null) {
+    throw { statusCode: 400, code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' };
   }
 
   const parsedRating = validateRating(rating);
@@ -163,9 +164,9 @@ export async function submitRating({
  * Retrieve rating details for a specific booking
  */
 export async function getRatingByBookingId(bookingId) {
-  const numericBookingId = parseInt(bookingId, 10);
-  if (isNaN(numericBookingId)) {
-    throw { statusCode: 400, code: 'INVALID_ID', message: 'Booking ID must be a numeric integer.' };
+  const numericBookingId = parsePositiveIntegerId(bookingId);
+  if (numericBookingId === null) {
+    throw { statusCode: 400, code: 'INVALID_ID', message: 'Booking ID must be a positive integer.' };
   }
 
   const pool = getDbPool();
@@ -189,9 +190,9 @@ export async function getRatingByBookingId(bookingId) {
  * Retrieve ratings submitted for a driver partner
  */
 export async function getDriverRatings(driverId) {
-  const numericDriverId = parseInt(driverId, 10);
-  if (isNaN(numericDriverId)) {
-    throw { statusCode: 400, code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' };
+  const numericDriverId = parsePositiveIntegerId(driverId);
+  if (numericDriverId === null) {
+    throw { statusCode: 400, code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' };
   }
 
   const pool = getDbPool();

@@ -28,6 +28,7 @@ import Badge from '../components/common/Badge';
 import EmptyState from '../components/common/EmptyState';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { useAuth } from '../context/AuthContext';
+import { getCashCollectionDisplayStatus } from '../utils/cashCollectionDisplay';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 const TRACKING_POLL_INTERVAL_MS = 8000;
@@ -688,6 +689,12 @@ export default function RiderDashboardPage() {
         throw new Error(json.error?.message || 'Simulated payment processing failed.');
       }
 
+      if (json.data?.cash_collection_status === 'OUTSTANDING') {
+        setPaymentModalOpen(false);
+        await loadBookings();
+        return;
+      }
+
       setPaymentReceipt(json.data);
       await loadBookings();
     } catch (err) {
@@ -1196,7 +1203,15 @@ export default function RiderDashboardPage() {
                                 {item.status}
                               </Badge>
                               {item.status === 'COMPLETED' && (
-                                item.payment_status === 'PAID' ? (
+                                getCashCollectionDisplayStatus(item.payment_method, item.cash_collection_status) === 'OUTSTANDING' ? (
+                                  <span className="inline-flex items-center text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                                    CASH OUTSTANDING
+                                  </span>
+                                ) : getCashCollectionDisplayStatus(item.payment_method, item.cash_collection_status) === 'UNVERIFIED' ? (
+                                  <span className="inline-flex items-center text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                                    CASH COLLECTION UNVERIFIED
+                                  </span>
+                                ) : item.payment_status === 'PAID' ? (
                                   <span className="inline-flex items-center text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">
                                     PAID ({item.payment_method || 'SIMULATED'})
                                   </span>
@@ -1244,7 +1259,15 @@ export default function RiderDashboardPage() {
                               </div>
                             ) : item.status === 'COMPLETED' ? (
                               <div className="flex flex-col items-end gap-1.5">
-                                {item.payment_status !== 'PAID' ? (
+                                {getCashCollectionDisplayStatus(item.payment_method, item.cash_collection_status) === 'OUTSTANDING' ? (
+                                  <span className="text-[10px] text-amber-400 font-medium">
+                                    Awaiting driver cash confirmation
+                                  </span>
+                                ) : getCashCollectionDisplayStatus(item.payment_method, item.cash_collection_status) === 'UNVERIFIED' ? (
+                                  <span className="text-[10px] text-amber-400 font-medium">
+                                    Cash collection status is unavailable
+                                  </span>
+                                ) : item.payment_status !== 'PAID' ? (
                                   <Button
                                     variant="primary"
                                     size="sm"
@@ -1306,7 +1329,13 @@ export default function RiderDashboardPage() {
                   <CreditCard className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-theme-text">Simulated Payment Gateway</h3>
+                  <h3 className="text-base font-bold text-theme-text">
+                    {paymentMethod === 'Cash' ||
+                    paymentReceipt?.payment_method === 'Cash' ||
+                    paymentReceipt?.paymentMethod === 'Cash'
+                      ? 'Cash Collection Record'
+                      : 'Simulated Payment Gateway'}
+                  </h3>
                   <p className="text-xs text-theme-text-secondary font-mono">
                     Ref: GR-BK-{payingBooking.booking_id}
                   </p>
@@ -1321,17 +1350,42 @@ export default function RiderDashboardPage() {
               </button>
             </div>
 
-            {/* Academic Simulation Disclaimer */}
             <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-3">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
               <div>
-                <strong className="text-amber-300">Academic Demo Simulation:</strong> This interface is a simulated payment terminal for academic testing. No real payment gateways are connected and no bank credentials, card numbers, or PINs are stored.
+                {paymentMethod === 'Cash' ||
+                paymentReceipt?.payment_method === 'Cash' ||
+                paymentReceipt?.paymentMethod === 'Cash' ? (
+                  <>
+                    <strong className="text-amber-300">Cash Collection:</strong> The payment record is confirmed only by the assigned driver. Cash is not processed by an electronic payment gateway.
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-amber-300">Academic Demo Simulation:</strong> This interface simulates an electronic payment terminal. No real payment gateway is connected and no bank credentials, card numbers, or PINs are stored.
+                  </>
+                )}
               </div>
             </div>
 
             {paymentReceipt ? (
               /* Success State / Receipt */
               <div className="space-y-4 py-2">
+                {paymentReceipt.payment_method === 'Cash' || paymentReceipt.paymentMethod === 'Cash' ? (
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
+                      <CheckCircle2 className="w-7 h-7" />
+                    </div>
+                    <h4 className="text-sm font-bold text-emerald-400">
+                      {paymentReceipt.cash_collection_status === 'COLLECTED' ||
+                      paymentReceipt.cashCollectionStatus === 'COLLECTED'
+                        ? 'Driver-Confirmed Cash Collection'
+                        : 'Cash Collection Status Unverified'}
+                    </h4>
+                    <p className="text-xs text-theme-text-secondary">
+                      This is a cash collection record, not a simulated electronic payment.
+                    </p>
+                  </div>
+                ) : (
                 <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
                   <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
                     <CheckCircle2 className="w-7 h-7" />
@@ -1343,14 +1397,19 @@ export default function RiderDashboardPage() {
                     This demo transaction was recorded successfully. No real money was transferred.
                   </p>
                 </div>
+                )}
 
                 <div className="p-3.5 rounded-xl bg-theme-surface/50 border border-theme-border text-xs space-y-2.5 font-mono">
                   <div className="flex justify-between">
-                    <span className="text-theme-text-secondary">Demo Txn Ref:</span>
+                    <span className="text-theme-text-secondary">
+                      {paymentReceipt.payment_method === 'Cash' || paymentReceipt.paymentMethod === 'Cash'
+                        ? 'Cash Record Ref:'
+                        : 'Demo Txn Ref:'}
+                    </span>
                     <span className="font-semibold text-purple-400">{paymentReceipt.transactionId}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-theme-text-secondary">Amount Settled:</span>
+                    <span className="text-theme-text-secondary">Recorded Amount:</span>
                     <span className="font-semibold text-theme-text">₹{paymentReceipt.amount}</span>
                   </div>
                   <div className="flex justify-between">
@@ -1358,8 +1417,20 @@ export default function RiderDashboardPage() {
                     <span className="font-semibold text-theme-text">{paymentReceipt.paymentMethod}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-theme-text-secondary">Timestamp:</span>
-                    <span className="text-theme-text">{new Date(paymentReceipt.paymentDate).toLocaleString()}</span>
+                    <span className="text-theme-text-secondary">
+                      {paymentReceipt.payment_method === 'Cash' || paymentReceipt.paymentMethod === 'Cash'
+                        ? 'Collection Timestamp:'
+                        : 'Timestamp:'}
+                    </span>
+                    <span className="text-theme-text">
+                      {(paymentReceipt.payment_method === 'Cash' || paymentReceipt.paymentMethod === 'Cash')
+                        ? (paymentReceipt.cash_collected_at || paymentReceipt.cashCollectedAt
+                          ? new Date(
+                              paymentReceipt.cash_collected_at || paymentReceipt.cashCollectedAt
+                            ).toLocaleString()
+                          : 'Unavailable')
+                        : new Date(paymentReceipt.paymentDate).toLocaleString()}
+                    </span>
                   </div>
                 </div>
 
@@ -1423,7 +1494,10 @@ export default function RiderDashboardPage() {
                       <button
                         key={m.id}
                         type="button"
-                        onClick={() => setPaymentMethod(m.id)}
+                        onClick={() => {
+                          setPaymentMethod(m.id);
+                          if (m.id === 'Cash') setSimulateFailure(false);
+                        }}
                         className={`p-2.5 rounded-xl border text-left transition-all ${paymentMethod === m.id
                             ? 'border-purple-500 bg-purple-500/10 text-purple-300 font-semibold'
                             : 'border-theme-border bg-theme-surface/30 text-theme-text hover:border-theme-border/80'
@@ -1435,6 +1509,18 @@ export default function RiderDashboardPage() {
                     ))}
                   </div>
                 </div>
+
+                {paymentMethod !== 'Cash' && (
+                  <p className="text-xs font-bold text-amber-300">
+                    DEMO PAYMENT — NO REAL MONEY. Electronic payment methods are simulated only.
+                  </p>
+                )}
+
+                {paymentMethod === 'Cash' && (
+                  <p className="text-xs text-amber-300">
+                    Cash remains outstanding until your assigned driver confirms collection.
+                  </p>
+                )}
 
                 {paymentMethod === 'UPI' && (
                   <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-4 flex flex-col items-center gap-3 text-center">
@@ -1469,24 +1555,26 @@ export default function RiderDashboardPage() {
                   </div>
                 )}
 
-                {/* Simulate Failure Checkbox (for testing failure handling & retries) */}
-                <div className="p-3 rounded-xl border border-theme-border bg-theme-surface/30 flex items-center justify-between">
-                  <div className="pr-3">
-                    <span className="text-xs font-medium text-theme-text block">
-                      Simulate Gateway Failure
-                    </span>
-                    <span className="text-[10px] text-theme-text-secondary block">
-                      Test simulated transaction rejection and safe retry policies
-                    </span>
+                {paymentMethod !== 'Cash' && (
+                  /* Simulate Failure Checkbox (for testing failure handling & retries) */
+                  <div className="p-3 rounded-xl border border-theme-border bg-theme-surface/30 flex items-center justify-between">
+                    <div className="pr-3">
+                      <span className="text-xs font-medium text-theme-text block">
+                        Simulate Gateway Failure
+                      </span>
+                      <span className="text-[10px] text-theme-text-secondary block">
+                        Test simulated transaction rejection and safe retry policies
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="simulateFailureCheck"
+                      checked={simulateFailure}
+                      onChange={(e) => setSimulateFailure(e.target.checked)}
+                      className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-theme-border"
+                    />
                   </div>
-                  <input
-                    type="checkbox"
-                    id="simulateFailureCheck"
-                    checked={simulateFailure}
-                    onChange={(e) => setSimulateFailure(e.target.checked)}
-                    className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-theme-border"
-                  />
-                </div>
+                )}
 
                 {paymentError && (
                   <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
@@ -1513,7 +1601,9 @@ export default function RiderDashboardPage() {
                     {processingPayment ? (
                       <LoadingSpinner size="sm" label="Processing..." />
                     ) : (
-                      `Pay ₹${payingBooking.total_fare}`
+                      paymentMethod === 'Cash'
+                        ? `Record Cash ₹${payingBooking.total_fare}`
+                        : `Pay ₹${payingBooking.total_fare}`
                     )}
                   </Button>
                 </div>

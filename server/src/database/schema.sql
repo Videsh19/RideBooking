@@ -118,6 +118,9 @@ CREATE TABLE IF NOT EXISTS payments (
     amount DECIMAL(10, 2) NOT NULL,
     payment_method ENUM('Cash', 'Card', 'UPI', 'Wallet', 'NetBanking') NOT NULL,
     payment_status ENUM('PENDING', 'SUCCESS', 'FAILED', 'REFUND') NOT NULL DEFAULT 'PENDING',
+    cash_collection_status ENUM('OUTSTANDING', 'COLLECTED') NULL DEFAULT NULL,
+    cash_collected_at TIMESTAMP NULL,
+    cash_collected_by_driver_id INT NULL,
     transaction_id VARCHAR(100) NOT NULL UNIQUE,
     successful_booking_id INT GENERATED ALWAYS AS (IF(payment_status = 'SUCCESS', booking_id, NULL)) STORED,
     refund_reason VARCHAR(255) NULL,
@@ -129,9 +132,12 @@ CREATE TABLE IF NOT EXISTS payments (
     UNIQUE KEY uq_successful_payment (successful_booking_id),
     FOREIGN KEY (booking_id) REFERENCES bookings(booking_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_payments_cash_collector
+        FOREIGN KEY (cash_collected_by_driver_id) REFERENCES driver_profiles(driver_id) ON DELETE SET NULL,
     INDEX idx_payment_booking (booking_id),
     INDEX idx_payment_user (user_id),
-    INDEX idx_payment_status (payment_status)
+    INDEX idx_payment_status (payment_status),
+    INDEX idx_payment_cash_collection (cash_collection_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. Ratings Table (Post-Trip Star Ratings & Written Reviews)

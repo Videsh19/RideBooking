@@ -59,6 +59,14 @@ export async function getDriverProfile(userId) {
  * Update driver availability duty status
  */
 export async function setDriverDuty(userId, isAvailable) {
+  if (typeof isAvailable !== 'boolean') {
+    throw {
+      statusCode: 400,
+      code: 'INVALID_DUTY_STATUS',
+      message: 'isAvailable must be a boolean.',
+    };
+  }
+
   const profile = await getDriverProfile(userId);
 
   if (profile.approval_status !== 'APPROVED') {
@@ -457,6 +465,10 @@ export async function getDriverHistoryAndEarnings(userId) {
        b.status,
        b.payment_status,
        b.total_fare,
+       cash_pay.payment_method,
+       cash_pay.cash_collection_status,
+       cash_pay.cash_collected_at,
+       cash_pay.cash_collected_by_driver_id,
        b.booking_date,
        COALESCE(b.completed_at, b.updated_at) AS completed_at,
        b.updated_at,
@@ -467,6 +479,20 @@ export async function getDriverHistoryAndEarnings(userId) {
      FROM bookings b
      JOIN users u ON b.user_id = u.user_id
      LEFT JOIN routes r ON b.route_id = r.route_id
+     LEFT JOIN payments cash_pay
+       ON cash_pay.payment_id = (
+         SELECT cash_payment.payment_id
+         FROM payments cash_payment
+         WHERE cash_payment.booking_id = b.booking_id
+           AND cash_payment.payment_method = 'Cash'
+         ORDER BY (
+                    cash_payment.cash_collection_status = 'OUTSTANDING'
+                    OR cash_payment.cash_collection_status IS NULL
+                  ) DESC,
+                  cash_payment.payment_date DESC,
+                  cash_payment.payment_id DESC
+         LIMIT 1
+       )
      WHERE b.driver_id = ? AND b.status = 'COMPLETED'
      ORDER BY COALESCE(b.completed_at, b.updated_at) DESC`,
     [profile.driver_id]
@@ -953,7 +979,27 @@ export async function findNearestAvailableDrivers(bookingId) {
  * With graceful fallback to broadcast dispatch queue when no locations exist
  */
 
-export async function assignNearestDriver(bookingId) {
+export async function assignNearestDriver(bookingId, requester) {
+  if (!requester || !['RIDER', 'ADMIN'].includes(requester.role)) {
+    throw {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      message: 'Only a rider or administrator may dispatch a booking.',
+    };
+  }
+
+  const requestedBooking = await getBookingById(bookingId);
+  if (
+    requester?.role === 'RIDER' &&
+    Number(requestedBooking.user_id) !== Number(requester.user_id)
+  ) {
+    throw {
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      message: 'You are not authorized to dispatch another passenger’s booking.',
+    };
+  }
+
   const maxRefreshes = 5;
 
   for (let attempt = 0; attempt < maxRefreshes; attempt++) {
@@ -968,7 +1014,10 @@ export async function assignNearestDriver(bookingId) {
             `No compatible and active ${booking.vehicle_tier} drivers available nearby.`
           );
         } catch (e) {
-          // Keep dispatch fallback available if logging fails.
+          console.warn(
+            `[Dispatch Failure] Could not record failure for booking ${bookingId}:`,
+            e.code || e.message
+          );
         }
       }
 

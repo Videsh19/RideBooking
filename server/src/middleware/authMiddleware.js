@@ -1,7 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { getUserById } from '../services/authService.js';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'goride_development_secret_key_change_in_production';
+import { env } from '../config/env.js';
 
 /**
  * Authenticates requests using trusted JWT tokens.
@@ -26,7 +25,7 @@ export async function authenticateToken(req, res, next) {
 
     let decoded;
     try {
-      decoded = jwt.verify(token, JWT_SECRET);
+      decoded = jwt.verify(token, env.jwtSecret);
     } catch (jwtErr) {
       return res.status(401).json({
         success: false,

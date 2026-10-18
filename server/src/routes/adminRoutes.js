@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticateToken, requireRole } from '../middleware/authMiddleware.js';
 import { getDbPool } from '../config/db.js';
 import * as driverService from '../services/driverService.js';
+import { parsePositiveIntegerId } from '../utils/ids.js';
 
 const router = Router();
 
@@ -31,11 +32,11 @@ router.get('/driver-applications', async (req, res, next) => {
  */
 router.patch('/driver-applications/:id/approve', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.id, 10);
-    if (isNaN(driverId)) {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -56,11 +57,11 @@ router.patch('/driver-applications/:id/approve', async (req, res, next) => {
  */
 router.patch('/driver-applications/:id/reject', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.id, 10);
-    if (isNaN(driverId)) {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -106,13 +107,13 @@ router.get('/users', async (req, res, next) => {
  */
 router.get('/driver-documents/:driverId/:docType', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.driverId, 10);
+    const driverId = parsePositiveIntegerId(req.params.driverId);
     const { docType } = req.params;
 
-    if (isNaN(driverId)) {
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
@@ -162,7 +163,10 @@ router.get('/system-stats', async (req, res, next) => {
     const [paymentStats] = await pool.query(
       `SELECT 
          COUNT(*) as totalPayments,
-         COALESCE(SUM(CASE WHEN payment_status = 'SUCCESS' THEN amount ELSE 0 END), 0) as totalCollectedRevenue,
+         COALESCE(SUM(CASE
+           WHEN payment_status = 'SUCCESS'
+            AND (payment_method <> 'Cash' OR cash_collection_status = 'COLLECTED')
+           THEN amount ELSE 0 END), 0) as totalCollectedRevenue,
          COALESCE(SUM(CASE WHEN payment_status = 'REFUND' THEN amount ELSE 0 END), 0) as totalRefundedAmount,
          SUM(CASE WHEN payment_status = 'REFUND' THEN 1 ELSE 0 END) as refundedPayments
        FROM payments`
@@ -218,11 +222,11 @@ router.get('/vehicles', async (req, res, next) => {
  */
 router.patch('/vehicles/:id/status', async (req, res, next) => {
   try {
-    const driverId = parseInt(req.params.id, 10);
-    if (isNaN(driverId)) {
+    const driverId = parsePositiveIntegerId(req.params.id);
+    if (driverId === null) {
       return res.status(400).json({
         success: false,
-        error: { code: 'INVALID_ID', message: 'Driver ID must be a numeric integer.' },
+        error: { code: 'INVALID_ID', message: 'Driver ID must be a positive integer.' },
       });
     }
 
