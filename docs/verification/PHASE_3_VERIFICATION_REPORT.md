@@ -214,3 +214,8 @@ Phase 3 isolated API/database integration: PASS for the scenarios covered
 above. Legacy-row runtime behavior, true concurrent Cash collection, manual
 UI behavior, and real-world money movement: NOT TESTED or NOT APPLICABLE.
 Overall Phase 3: PARTIALLY VERIFIED, not a full production-money acceptance.
+
+### Git delivery
+The verification and test-fixture update commit was `e8210a1` on branch
+`akshay`; it was pushed successfully to `origin/akshay`. No changes were
+pushed to `main`.

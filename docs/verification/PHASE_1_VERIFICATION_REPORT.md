@@ -213,3 +213,8 @@ or real-device reassignment test was performed. The isolated API suites
 verified backend workflows only. Phase 1 automated dispatch/category
 integration: PASS. Manual UX and real-device location behavior: NOT TESTED.
 Overall Phase 1: PARTIALLY VERIFIED, not a full manual acceptance.
+
+### Git delivery
+The verification and test-fixture update commit was `e8210a1` on branch
+`akshay`; it was pushed successfully to `origin/akshay`. No changes were
+pushed to `main`.

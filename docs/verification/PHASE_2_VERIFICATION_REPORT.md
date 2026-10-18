@@ -162,3 +162,8 @@ the isolated environment, but they do not verify device permissions, map
 rendering, notification delivery, or network conditions. Automated API
 integration: PASS. Manual UX/device behavior: NOT TESTED. Overall Phase 2:
 PARTIALLY VERIFIED.
+
+### Git delivery
+The verification and test-fixture update commit was `e8210a1` on branch
+`akshay`; it was pushed successfully to `origin/akshay`. No changes were
+pushed to `main`.
