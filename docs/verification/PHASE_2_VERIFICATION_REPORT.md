@@ -124,6 +124,13 @@ was created for this run; API startup applied the project migration there and
 the migrated schema contained 10 tables. The dedicated database-scoped test
 account was removed after testing; test records and database were retained.
 
+The current configured MySQL principal was found to have broad global
+administrative privileges, including database/user administration. This
+differs from the earlier privilege snapshot in this report. It was used only
+for read-only inspection and one-time provisioning; the API used the
+schema-scoped runner. The configured principal's privileges were not changed.
+Use a least-privileged runtime account in normal deployments.
+
 Ports 5000 and 5001 were occupied by pre-existing listeners. They were not
 stopped or reused. The test API ran on a separately selected local port, and a
 temporary fetch import routed the legacy test scripts' hardcoded port-5000

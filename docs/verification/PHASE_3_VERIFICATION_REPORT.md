@@ -160,6 +160,14 @@ temporary account scoped to `goride_test_db`; that account was removed after
 the API stopped. The test database and test records were retained. No
 historical cash rows in `goride_db` were backfilled or otherwise changed.
 
+The current configured MySQL principal was found to have broad global
+administrative privileges, including database/user administration. This
+differs from the earlier privilege snapshot above. It was used only for
+read-only inspection and one-time provisioning; the API used the
+schema-scoped runner. The configured principal's privileges were not changed.
+Treat this as a security risk and use a least-privileged runtime account in
+normal deployments.
+
 Ports 5000 and 5001 were occupied and left untouched. The test API used a
 separately selected local port. A temporary Node fetch import routed the
 legacy suites' hardcoded port-5000 requests to the isolated API. The
