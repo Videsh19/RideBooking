@@ -12,9 +12,11 @@ export async function createBookingHandler(req, res, next) {
       pickupAddress,
       pickupLat,
       pickupLng,
+      pickupTerritory,
       destAddress,
       destLat,
       destLng,
+      destTerritory,
       vehicleTier,
       vehicleCategory,
     } = req.body;
@@ -26,9 +28,11 @@ export async function createBookingHandler(req, res, next) {
       pickupAddress,
       pickupLat,
       pickupLng,
+      pickupTerritory,
       destAddress,
       destLat,
       destLng,
+      destTerritory,
       vehicleTier,
       vehicleCategory,
     });
@@ -187,9 +191,11 @@ export async function estimateFareHandler(req, res, next) {
       pickupAddress,
       pickupLat,
       pickupLng,
+      pickupTerritory,
       destAddress,
       destLat,
       destLng,
+      destTerritory,
       vehicleTier,
       vehicleCategory,
     } = req.body;
@@ -209,9 +215,11 @@ export async function estimateFareHandler(req, res, next) {
       pickupAddress,
       pickupLat,
       pickupLng,
+      pickupTerritory,
       destAddress,
       destLat,
       destLng,
+      destTerritory,
       vehicleTier,
       vehicleCategory,
     });
@@ -227,7 +235,7 @@ export async function estimateFareHandler(req, res, next) {
 
 /**
  * GET /api/bookings/places
- * Search places and landmarks across Mumbai MMR with location autocomplete
+ * Search places and addresses using the configured geocoding service
  */
 export async function searchPlacesHandler(req, res, next) {
   try {

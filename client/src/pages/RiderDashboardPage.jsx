@@ -58,8 +58,22 @@ const isValidRouteGeometry = (geometry) =>
       isValidCoordinatePair(coordinate[1], coordinate[0])
   );
 
-const getEstimateContextKey = (pickup, dropoff, vehicleTier) =>
-  JSON.stringify([pickup.trim(), dropoff.trim(), vehicleTier]);
+const getEstimateContextKey = (
+  pickup,
+  dropoff,
+  vehicleTier,
+  pickupCoords,
+  destCoords
+) =>
+  JSON.stringify([
+    pickup.trim(),
+    dropoff.trim(),
+    vehicleTier,
+    pickupCoords.lat,
+    pickupCoords.lng,
+    destCoords.lat,
+    destCoords.lng,
+  ]);
 
 const isValidFixTimestamp = (timestamp) =>
   Number.isSafeInteger(timestamp) &&
@@ -72,12 +86,12 @@ const isFreshFixTimestamp = (timestamp) =>
 
 export default function RiderDashboardPage() {
   // Location selection with coordinates and detected territories
-  const [pickup, setPickup] = useState('Gateway of India, Colaba');
+  const [pickup, setPickup] = useState('');
   const [pickupCoords, setPickupCoords] = useState({ lat: null, lng: null });
   const [pickupTerritory, setPickupTerritory] = useState('');
   const [pickupError, setPickupError] = useState('');
 
-  const [dropoff, setDropoff] = useState('Dadar Western Railway Station');
+  const [dropoff, setDropoff] = useState('');
   const [destCoords, setDestCoords] = useState({ lat: null, lng: null });
   const [destTerritory, setDestTerritory] = useState('');
   const [destError, setDestError] = useState('');
@@ -184,7 +198,17 @@ export default function RiderDashboardPage() {
       setPickupError('');
       return;
     }
-    setPickup(place.name || place.address);
+    const selectedName = String(place.name || place.address || '').trim();
+    if (
+      !selectedName ||
+      !isValidCoordinatePair(place.latitude, place.longitude)
+    ) {
+      setPickupCoords({ lat: null, lng: null });
+      setPickupTerritory('');
+      setPickupError('The selected pickup has invalid location coordinates. Choose another result.');
+      return;
+    }
+    setPickup(selectedName);
     setPickupCoords({ lat: place.latitude, lng: place.longitude });
     setPickupTerritory(place.territory || '');
     setPickupError('');
@@ -199,7 +223,17 @@ export default function RiderDashboardPage() {
       setDestError('');
       return;
     }
-    setDropoff(place.name || place.address);
+    const selectedName = String(place.name || place.address || '').trim();
+    if (
+      !selectedName ||
+      !isValidCoordinatePair(place.latitude, place.longitude)
+    ) {
+      setDestCoords({ lat: null, lng: null });
+      setDestTerritory('');
+      setDestError('The selected destination has invalid location coordinates. Choose another result.');
+      return;
+    }
+    setDropoff(selectedName);
     setDestCoords({ lat: place.latitude, lng: place.longitude });
     setDestTerritory(place.territory || '');
     setDestError('');
@@ -220,8 +254,11 @@ export default function RiderDashboardPage() {
 
     async function fetchRouteEstimate() {
       const hasText = pickup.trim().length >= 3 && dropoff.trim().length >= 3;
+      const hasCoordinates =
+        isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng) &&
+        isValidCoordinatePair(destCoords.lat, destCoords.lng);
 
-      if (!hasText) {
+      if (!hasText || !hasCoordinates) {
         setEstimate(null);
         setEstimateContextKey(null);
         setEstimateError(null);
@@ -235,17 +272,15 @@ export default function RiderDashboardPage() {
 
         const requestBody = {
           pickupAddress: pickup.trim(),
+          pickupLat: pickupCoords.lat,
+          pickupLng: pickupCoords.lng,
+          pickupTerritory,
           destAddress: dropoff.trim(),
+          destLat: destCoords.lat,
+          destLng: destCoords.lng,
+          destTerritory,
           vehicleTier: selectedTier,
         };
-        if (isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng)) {
-          requestBody.pickupLat = pickupCoords.lat;
-          requestBody.pickupLng = pickupCoords.lng;
-        }
-        if (isValidCoordinatePair(destCoords.lat, destCoords.lng)) {
-          requestBody.destLat = destCoords.lat;
-          requestBody.destLng = destCoords.lng;
-        }
 
         const res = await fetch(`${API_BASE_URL}/bookings/estimate`, {
           method: 'POST',
@@ -273,21 +308,11 @@ export default function RiderDashboardPage() {
 
         if (isCurrentRequest()) {
           setEstimate(json.data);
-          setEstimateContextKey(getEstimateContextKey(pickup, dropoff, selectedTier));
-          setPickupCoords({
-            lat: estimatedPickupCoords.latitude,
-            lng: estimatedPickupCoords.longitude,
-          });
-          setDestCoords({
-            lat: estimatedDestCoords.latitude,
-            lng: estimatedDestCoords.longitude,
-          });
-          if (json.data.pickupZone) {
-            setPickupTerritory(json.data.pickupZone);
-          }
-          if (json.data.destZone) {
-            setDestTerritory(json.data.destZone);
-          }
+          setEstimateContextKey(
+            getEstimateContextKey(pickup, dropoff, selectedTier, pickupCoords, destCoords)
+          );
+          if (json.data.pickupZone) setPickupTerritory(json.data.pickupZone);
+          if (json.data.destZone) setDestTerritory(json.data.destZone);
         }
       } catch (err) {
         if (isCurrentRequest()) {
@@ -312,7 +337,8 @@ export default function RiderDashboardPage() {
 
   const estimateMatchesCurrentContext =
     Boolean(estimate) &&
-    estimateContextKey === getEstimateContextKey(pickup, dropoff, selectedTier) &&
+    estimateContextKey ===
+      getEstimateContextKey(pickup, dropoff, selectedTier, pickupCoords, destCoords) &&
     isValidCoordinatePair(estimate?.pickupCoords?.latitude, estimate?.pickupCoords?.longitude) &&
     isValidCoordinatePair(estimate?.destCoords?.latitude, estimate?.destCoords?.longitude) &&
     pickupCoords.lat === estimate.pickupCoords.latitude &&
@@ -453,9 +479,8 @@ export default function RiderDashboardPage() {
       }, TRACKING_REQUEST_TIMEOUT_MS);
 
       try {
-        const trackingUrl = `${API_BASE_URL}/bookings/${bookingId}/tracking${
-          requestRouteGeometry ? '?includeRouteGeometry=true' : ''
-        }`;
+        const trackingUrl = `${API_BASE_URL}/bookings/${bookingId}/tracking${requestRouteGeometry ? '?includeRouteGeometry=true' : ''
+          }`;
         const res = await fetch(trackingUrl, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
@@ -498,7 +523,7 @@ export default function RiderDashboardPage() {
             routeGeometry: isValidRouteGeometry(data.route_geometry)
               ? data.route_geometry
               : current[bookingId]?.token === token &&
-                  current[bookingId]?.driverId === booking.driver_id
+                current[bookingId]?.driverId === booking.driver_id
                 ? current[bookingId].routeGeometry
                 : null,
           },
@@ -550,7 +575,7 @@ export default function RiderDashboardPage() {
               fixTimestampMs: null,
               routeGeometry:
                 previous?.token === token &&
-                previous.driverId === booking.driver_id
+                  previous.driverId === booking.driver_id
                   ? previous.routeGeometry
                   : null,
             },
@@ -586,8 +611,16 @@ export default function RiderDashboardPage() {
     setBookingError(null);
     setBookingSuccess(null);
 
-    if (!pickup.trim() || !dropoff.trim()) {
-      setBookingError('Please enter valid pickup and destination locations.');
+    const pickupIsValid =
+      pickup.trim().length >= 3 &&
+      isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng);
+    const destinationIsValid =
+      dropoff.trim().length >= 3 &&
+      isValidCoordinatePair(destCoords.lat, destCoords.lng);
+    if (!pickupIsValid || !destinationIsValid) {
+      setPickupError(pickupIsValid ? '' : 'Search for and select a valid pickup location.');
+      setDestError(destinationIsValid ? '' : 'Search for and select a valid destination.');
+      setBookingError('Select valid pickup and destination locations from the search results.');
       return;
     }
     if (!estimateMatchesCurrentContext) {
@@ -607,9 +640,11 @@ export default function RiderDashboardPage() {
           pickupAddress: pickup.trim(),
           pickupLat: estimate.pickupCoords.latitude,
           pickupLng: estimate.pickupCoords.longitude,
+          pickupTerritory: estimate.pickupZone,
           destAddress: dropoff.trim(),
           destLat: estimate.destCoords.latitude,
           destLng: estimate.destCoords.longitude,
+          destTerritory: estimate.destZone,
           vehicleTier: selectedTier,
         }),
       });
@@ -830,7 +865,7 @@ export default function RiderDashboardPage() {
                   label="Pickup Location"
                   id="pickup-input"
                   icon={MapPin}
-                  placeholder="Search landmark, building or street in Mumbai MMR..."
+                  placeholder="Search a place, locality, or full address..."
                   value={pickup}
                   onChangeText={handlePickupTextChange}
                   onSelectPlace={handleSelectPickup}
@@ -869,16 +904,16 @@ export default function RiderDashboardPage() {
                           key={tier.id}
                           onClick={() => handleSelectTier(tier.id)}
                           className={`p-3 rounded-lg border cursor-pointer transition-all duration-150 ${isSelected
-                              ? 'border-theme-primary bg-theme-surface'
-                              : 'border-theme-border hover:border-theme-border hover:bg-theme-surface/50'
+                            ? 'border-theme-primary bg-theme-surface'
+                            : 'border-theme-border hover:border-theme-border hover:bg-theme-surface/50'
                             }`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
                               <div
                                 className={`w-8 h-8 rounded-lg flex items-center justify-center ${isSelected
-                                    ? 'bg-theme-primary text-white'
-                                    : 'bg-theme-surface text-theme-text-secondary border border-theme-border'
+                                  ? 'bg-theme-primary text-white'
+                                  : 'bg-theme-surface text-theme-text-secondary border border-theme-border'
                                   }`}
                               >
                                 <Icon className="w-4 h-4" />
@@ -939,6 +974,53 @@ export default function RiderDashboardPage() {
                     <div className="text-[11px] text-red-400 flex items-start gap-1.5 pt-1 border-t border-theme-border">
                       <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                       <span>{estimateError}</span>
+                    </div>
+                  )}
+
+                  {(!isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng) ||
+                    !isValidCoordinatePair(destCoords.lat, destCoords.lng)) && (
+                    <p className="text-[11px] text-theme-text-secondary">
+                      Search and select both locations to calculate a road-route fare.
+                    </p>
+                  )}
+
+                  {(pickupCoords.lat !== null || destCoords.lat !== null) && (
+                    <div className="space-y-2 pt-2 border-t border-theme-border">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[11px] font-semibold text-theme-text">
+                          Selected Route Preview
+                        </p>
+                        <div className="flex gap-3 text-[10px] text-theme-text-secondary">
+                          <span><span className="text-emerald-400">●</span> Pickup</span>
+                          <span><span className="text-orange-400">●</span> Destination</span>
+                        </div>
+                      </div>
+                      <LiveRideMap
+                        pickupCoordinates={
+                          isValidCoordinatePair(pickupCoords.lat, pickupCoords.lng)
+                            ? { latitude: pickupCoords.lat, longitude: pickupCoords.lng }
+                            : null
+                        }
+                        destinationCoordinates={
+                          isValidCoordinatePair(destCoords.lat, destCoords.lng)
+                            ? { latitude: destCoords.lat, longitude: destCoords.lng }
+                            : null
+                        }
+                        routeGeometry={
+                          estimateMatchesCurrentContext &&
+                          isValidRouteGeometry(estimate.routeGeometry)
+                            ? estimate.routeGeometry
+                            : null
+                        }
+                      />
+                      {pickupCoords.lat !== null &&
+                        destCoords.lat !== null &&
+                        estimateMatchesCurrentContext &&
+                        !isValidRouteGeometry(estimate.routeGeometry) && (
+                          <p className="text-[10px] text-amber-300">
+                            Route line is unavailable from the routing service; no straight-line route is shown.
+                          </p>
+                        )}
                     </div>
                   )}
 
@@ -1038,9 +1120,8 @@ export default function RiderDashboardPage() {
                           </Badge>
                         </div>
 
-                        <p className={`text-[11px] ${
-                          locationIsFresh ? 'text-emerald-400' : 'text-theme-text-secondary'
-                        }`}>
+                        <p className={`text-[11px] ${locationIsFresh ? 'text-emerald-400' : 'text-theme-text-secondary'
+                          }`}>
                           {trackingMessage}
                           {!locationIsFresh && lastUpdated && (
                             <span> Last fix: {lastUpdated}.</span>
@@ -1054,7 +1135,7 @@ export default function RiderDashboardPage() {
                             }
                             routeGeometry={
                               trackingMatchesBooking &&
-                              isValidRouteGeometry(tracking.routeGeometry)
+                                isValidRouteGeometry(tracking.routeGeometry)
                                 ? tracking.routeGeometry
                                 : null
                             }
@@ -1089,7 +1170,7 @@ export default function RiderDashboardPage() {
                         </Badge>
                       )}
                       <Badge variant="neutral" size="sm">
-                        Coverage: 6 MMR Zones
+                        Location search
                       </Badge>
                     </div>
                   </div>
@@ -1099,7 +1180,7 @@ export default function RiderDashboardPage() {
               <div className="p-3.5 grid grid-cols-2 gap-3 text-xs bg-theme-card">
                 <div className="p-2.5 rounded-lg border border-theme-border bg-theme-surface/30">
                   <span className="text-[11px] text-theme-text-secondary block">
-                    Origin Service Territory
+                    Pickup Area
                   </span>
                   <span className="font-semibold text-theme-text block truncate mt-0.5">
                     {pickupTerritory || 'Auto-detecting...'}
@@ -1112,7 +1193,7 @@ export default function RiderDashboardPage() {
                 </div>
                 <div className="p-2.5 rounded-lg border border-theme-border bg-theme-surface/30">
                   <span className="text-[11px] text-theme-text-secondary block">
-                    Destination Territory
+                    Destination Area
                   </span>
                   <span className="font-semibold text-theme-text block truncate mt-0.5">
                     {destTerritory || 'Auto-detecting...'}
@@ -1331,8 +1412,8 @@ export default function RiderDashboardPage() {
                 <div>
                   <h3 className="text-base font-bold text-theme-text">
                     {paymentMethod === 'Cash' ||
-                    paymentReceipt?.payment_method === 'Cash' ||
-                    paymentReceipt?.paymentMethod === 'Cash'
+                      paymentReceipt?.payment_method === 'Cash' ||
+                      paymentReceipt?.paymentMethod === 'Cash'
                       ? 'Cash Collection Record'
                       : 'Simulated Payment Gateway'}
                   </h3>
@@ -1354,8 +1435,8 @@ export default function RiderDashboardPage() {
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
               <div>
                 {paymentMethod === 'Cash' ||
-                paymentReceipt?.payment_method === 'Cash' ||
-                paymentReceipt?.paymentMethod === 'Cash' ? (
+                  paymentReceipt?.payment_method === 'Cash' ||
+                  paymentReceipt?.paymentMethod === 'Cash' ? (
                   <>
                     <strong className="text-amber-300">Cash Collection:</strong> The payment record is confirmed only by the assigned driver. Cash is not processed by an electronic payment gateway.
                   </>
@@ -1377,7 +1458,7 @@ export default function RiderDashboardPage() {
                     </div>
                     <h4 className="text-sm font-bold text-emerald-400">
                       {paymentReceipt.cash_collection_status === 'COLLECTED' ||
-                      paymentReceipt.cashCollectionStatus === 'COLLECTED'
+                        paymentReceipt.cashCollectionStatus === 'COLLECTED'
                         ? 'Driver-Confirmed Cash Collection'
                         : 'Cash Collection Status Unverified'}
                     </h4>
@@ -1386,17 +1467,17 @@ export default function RiderDashboardPage() {
                     </p>
                   </div>
                 ) : (
-                <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
-                  <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
-                    <CheckCircle2 className="w-7 h-7" />
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
+                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center">
+                      <CheckCircle2 className="w-7 h-7" />
+                    </div>
+                    <h4 className="text-sm font-bold text-emerald-400">
+                      Simulated Payment Successful
+                    </h4>
+                    <p className="text-xs text-theme-text-secondary">
+                      This demo transaction was recorded successfully. No real money was transferred.
+                    </p>
                   </div>
-                  <h4 className="text-sm font-bold text-emerald-400">
-                    Simulated Payment Successful
-                  </h4>
-                  <p className="text-xs text-theme-text-secondary">
-                    This demo transaction was recorded successfully. No real money was transferred.
-                  </p>
-                </div>
                 )}
 
                 <div className="p-3.5 rounded-xl bg-theme-surface/50 border border-theme-border text-xs space-y-2.5 font-mono">
@@ -1426,8 +1507,8 @@ export default function RiderDashboardPage() {
                       {(paymentReceipt.payment_method === 'Cash' || paymentReceipt.paymentMethod === 'Cash')
                         ? (paymentReceipt.cash_collected_at || paymentReceipt.cashCollectedAt
                           ? new Date(
-                              paymentReceipt.cash_collected_at || paymentReceipt.cashCollectedAt
-                            ).toLocaleString()
+                            paymentReceipt.cash_collected_at || paymentReceipt.cashCollectedAt
+                          ).toLocaleString()
                           : 'Unavailable')
                         : new Date(paymentReceipt.paymentDate).toLocaleString()}
                     </span>
@@ -1499,8 +1580,8 @@ export default function RiderDashboardPage() {
                           if (m.id === 'Cash') setSimulateFailure(false);
                         }}
                         className={`p-2.5 rounded-xl border text-left transition-all ${paymentMethod === m.id
-                            ? 'border-purple-500 bg-purple-500/10 text-purple-300 font-semibold'
-                            : 'border-theme-border bg-theme-surface/30 text-theme-text hover:border-theme-border/80'
+                          ? 'border-purple-500 bg-purple-500/10 text-purple-300 font-semibold'
+                          : 'border-theme-border bg-theme-surface/30 text-theme-text hover:border-theme-border/80'
                           }`}
                       >
                         <div className="text-xs font-bold">{m.name}</div>
@@ -1683,8 +1764,8 @@ export default function RiderDashboardPage() {
                       >
                         <Star
                           className={`w-7 h-7 transition-colors ${star <= (ratingHover || ratingStars)
-                              ? 'fill-amber-400 text-amber-400'
-                              : 'text-theme-border fill-transparent'
+                            ? 'fill-amber-400 text-amber-400'
+                            : 'text-theme-border fill-transparent'
                             }`}
                         />
                       </button>

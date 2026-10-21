@@ -12,6 +12,7 @@
     "test:p3": "node test_phase3_p3.mjs",
     "test:p4": "node test_phase4.mjs",
     "test:categories": "node test_vehicle_categories.mjs",
+    "test:locations": "node test_location_search.mjs",
     "test:all": "node test_phase3_p1.mjs && node test_phase3_p2.mjs && node test_phase3_p3.mjs && node test_phase4.mjs && node test_vehicle_categories.mjs"
   },
   "dependencies": {

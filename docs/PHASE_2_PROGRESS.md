@@ -18,7 +18,7 @@ In accordance with architectural review and user direction, the rider booking fo
 1. **Removed Territory Distance Matrix:** Completely deleted `ZONE_DISTANCE_MATRIX` from [`server/src/services/bookingService.js`](file:///D:/GoRide/server/src/services/bookingService.js). Distance is never calculated from fixed zone-to-zone tables or fictitious matrices.
 2. **Location Autocomplete & Coordinate Capture:** Implemented location autocomplete ([`client/src/components/common/LocationSearchInput.jsx`](file:///D:/GoRide/client/src/components/common/LocationSearchInput.jsx)) and endpoint `GET /api/bookings/places?q=...`. Selecting an origin or destination captures exact geographic latitude and longitude.
 3. **Real Driving Road Routing:** Road distance and driving duration are calculated using actual coordinates through a road routing API (`ROUTING_API_URL`, OSRM).
-4. **Dynamic Territory Validation:** The six approved MMR territories (**Mumbai City**, **Mumbai Suburban**, **Palghar district**, **Thane district**, **Kalyan-Dombivli**, **Navi Mumbai**) are preserved strictly for service-area boundary validation. Customers are no longer forced to manually select territory dropdowns.
+4. **Geocoder-Resolved Areas:** Search results come from the configured Photon-compatible geocoder without a Mumbai bounding box or curated coordinate presets. Area labels are taken from geocoder metadata; map pins, road estimates, and bookings use the selected result coordinates. Actual availability depends on the configured geocoder and routing provider coverage.
 5. **Dynamic Fare Calculation:** Fare is computed dynamically whenever pickup, destination, or vehicle tier changes, using the approved fare formula:
    $$\text{Total Fare} = \max(\text{Min Fare}, \text{round}(\text{Base Fare} + \text{Distance}_{\text{km}} \times \text{Rate}_{\text{per km}}))$$
 6. **Relational MySQL Persistence:** Full trip telemetry—including pickup/destination addresses, latitude, longitude, actual road distance, driving duration, and total fare—is persisted transactionally in MySQL tables (`locations`, `routes`, `bookings`).
@@ -67,7 +67,7 @@ Derived from SRS REQ-020 and REQ-021:
 
 | Endpoint | Method | Status | Description |
 | :--- | :---: | :---: | :--- |
-| `/api/bookings/places` | `GET` | 200 | Location autocomplete searching Mumbai MMR landmarks and returning coordinates and detected territory. |
+| `/api/bookings/places` | `GET` | 200 | Location autocomplete using the configured geocoder and returning provider-resolved names, addresses, coordinates, and area metadata where available. |
 | `/api/bookings/estimate` | `POST` | 200 | Upfront route and fare estimation using actual road routing (OSRM). Recalculates dynamically when coordinates or tier change. |
 | `/api/bookings` | `POST` | 201 | Creates ride booking (`Booking.bookRide()`), stores coordinates in `locations`, route metrics in `routes`, and booking in `bookings`. |
 | `/api/bookings` | `GET` | 200 | Lists passenger ride bookings from MySQL with joined coordinates, route distance, and duration. |
@@ -118,13 +118,13 @@ Under the former zone matrix, all intra-territory rides were assigned a static d
 
 ---
 
-### Test Suite C: Out-of-Service-Area Rejection
+### Test Suite C: Historical Out-of-Service-Area Rejection
 
 - *Test Coordinates:* Pune Railway Station (`18.5204°N, 73.8567°E`) $\to$ Dadar Station (`19.0180°N, 72.8444°E`)
 - *API Status:* **HTTP 400 Bad Request**
 - *Error Code:* `OUT_OF_SERVICE_AREA`
 - *Error Message:* `Pickup coordinates (18.5204, 73.8567) are outside GoRide's supported service area (Mumbai City, Mumbai Suburban, Palghar district, Thane district, Kalyan-Dombivli, Navi Mumbai).`
-- *Result:* **PASS** — Strict boundary protection enforced without requiring manual dropdown selections.
+- *Historical Result:* **PASS** — This records the former MMR-only boundary behavior and is superseded by the dynamic geocoding update below.
 
 ---
 
@@ -275,3 +275,20 @@ In accordance with scope constraints, the following features have been intention
 * **Database Service:** `MySQL80` running on port 3306 with `goride_db`
 
 Phase 2 and Role-Based Authentication Refinements are complete. Awaiting your review before beginning Phase 3.
+
+## 11. Dynamic Location Selection Update — 2026-10-21
+
+Pickup and destination search now uses the configured Photon-compatible
+geocoder without curated location pins or an MMR bounding box. The selected
+geocoder coordinates are used for map markers, OSRM-compatible road routing,
+fare estimation, and booking persistence. The previous MMR-only service-area
+rejection is removed; successful routes still depend on the configured
+geocoder and routing provider supporting the requested locations. Geocoding
+and routing errors are returned explicitly, and no straight-line route or
+default pin is substituted.
+
+`node server/test_location_search.mjs` verifies unrelated geocoded places,
+coordinate-preserving route requests, returned route geometry, and surfaced
+geocoder connection failures. Live provider spot checks resolved places in
+Australia and the United Kingdom and returned a London road route; this does
+not verify the application against a live database or browser session.

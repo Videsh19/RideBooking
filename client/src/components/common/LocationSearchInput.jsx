@@ -6,7 +6,7 @@ export default function LocationSearchInput({
   label,
   id,
   icon: Icon = MapPin,
-  placeholder = 'Search place or address in Mumbai MMR...',
+  placeholder = 'Search a place, locality, or full address...',
   value,
   onChangeText,
   onSelectPlace,
@@ -159,7 +159,7 @@ export default function LocationSearchInput({
       {isOpen && (suggestions.length > 0 || searchMessage) && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-theme-card border border-theme-border rounded-lg shadow-2xl overflow-hidden max-h-64 overflow-y-auto divide-y divide-theme-border/60">
           <div className="px-3 py-1.5 bg-theme-surface/60 text-[10px] font-medium text-theme-text-secondary uppercase tracking-wider flex items-center justify-between">
-            <span>{suggestions.length ? `Verified MMR Places (${suggestions.length})` : 'Location Search'}</span>
+            <span>{suggestions.length ? `Location Results (${suggestions.length})` : 'Location Search'}</span>
             <span>OSM / Road Network</span>
           </div>
           {suggestions.map((item) => (
@@ -179,9 +179,11 @@ export default function LocationSearchInput({
                   </div>
                 </div>
               </div>
-              <Badge variant="purple" size="sm" className="flex-shrink-0">
-                {item.territory}
-              </Badge>
+              {item.territory && (
+                <Badge variant="purple" size="sm" className="flex-shrink-0">
+                  {item.territory}
+                </Badge>
+              )}
             </div>
           ))}
           {searchMessage && (
@@ -192,12 +194,12 @@ export default function LocationSearchInput({
         </div>
       )}
 
-      {/* Territory & Coordinate Confirmation Pill */}
+      {/* Resolved area and coordinates */}
       {selectedTerritory && selectedCoords && (
         <div className="flex items-center justify-between text-[11px] text-theme-text-secondary pt-0.5 px-0.5">
           <div className="flex items-center gap-1.5 text-emerald-400">
             <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>Territory: <strong className="text-theme-text">{selectedTerritory}</strong></span>
+            <span>Area: <strong className="text-theme-text">{selectedTerritory}</strong></span>
           </div>
           <span className="font-mono text-[10px] text-theme-text-secondary">
             {Number(selectedCoords.lat).toFixed(4)}°, {Number(selectedCoords.lng).toFixed(4)}°

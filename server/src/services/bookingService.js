@@ -1,15 +1,5 @@
 import { getDbPool } from '../config/db.js';
 
-// Approved operational service territories across Mumbai Metropolitan Region
-export const ALLOWED_SERVICE_ZONES = [
-  'Mumbai City',
-  'Mumbai Suburban',
-  'Palghar district',
-  'Thane district',
-  'Kalyan-Dombivli',
-  'Navi Mumbai',
-];
-
 // Tier pricing parameters derived from SRS REQ-020 and REQ-021
 export const TIER_RATES = {
   STANDARD: { baseFare: 50, ratePerKm: 15, minFare: 70 },
@@ -20,353 +10,87 @@ export const TIER_RATES = {
   xl: { baseFare: 130, ratePerKm: 32, minFare: 180 },
 };
 
-// Mumbai Metropolitan Region (MMR) Geographic Boundary Box
-const MMR_BOUNDS = {
-  minLat: 18.70,
-  maxLat: 20.25,
-  minLon: 72.65,
-  maxLon: 73.35,
-};
-
-// Curated high-frequency MMR transport hubs & landmarks for instant autocomplete
-const MMR_LANDMARK_PRESETS = [
-  {
-    name: 'Gateway of India, Colaba',
-    address: 'Apollo Bandar, Colaba, Mumbai, Maharashtra 400001',
-    latitude: 18.9220,
-    longitude: 72.8347,
-    territory: 'Mumbai City',
-  },
-  {
-    name: 'Chhatrapati Shivaji Maharaj Terminus (CST)',
-    address: 'Fort, Mumbai, Maharashtra 400001',
-    latitude: 18.9401,
-    longitude: 72.8358,
-    territory: 'Mumbai City',
-  },
-  {
-    name: 'Marine Drive Promenade',
-    address: 'Netaji Subhash Chandra Bose Road, Mumbai, Maharashtra 400020',
-    latitude: 18.9432,
-    longitude: 72.8230,
-    territory: 'Mumbai City',
-  },
-  {
-    name: 'Dadar Western Railway Station',
-    address: 'Dadar West, Mumbai, Maharashtra 400028',
-    latitude: 19.0180,
-    longitude: 72.8444,
-    territory: 'Mumbai City',
-  },
-  {
-    name: 'Worli Sea Face',
-    address: 'Worli, Mumbai, Maharashtra 400018',
-    latitude: 19.0068,
-    longitude: 72.8159,
-    territory: 'Mumbai City',
-  },
-  {
-    name: 'Bandra Kurla Complex (BKC)',
-    address: 'G Block BKC, Bandra East, Mumbai, Maharashtra 400051',
-    latitude: 19.0607,
-    longitude: 72.8547,
-    territory: 'Mumbai Suburban',
-  },
-  {
-    name: 'Chhatrapati Shivaji Maharaj International Airport (T2)',
-    address: 'Sahar, Andheri East, Mumbai, Maharashtra 400099',
-    latitude: 19.0896,
-    longitude: 72.8656,
-    territory: 'Mumbai Suburban',
-  },
-  {
-    name: 'Andheri Metro Station',
-    address: 'Andheri West, Mumbai, Maharashtra 400058',
-    latitude: 19.1197,
-    longitude: 72.8468,
-    territory: 'Mumbai Suburban',
-  },
-  {
-    name: 'Powai Lake Promenade',
-    address: 'Hiranandani Gardens, Powai, Mumbai, Maharashtra 400076',
-    latitude: 19.1176,
-    longitude: 72.9056,
-    territory: 'Mumbai Suburban',
-  },
-  {
-    name: 'Borivali Railway Station',
-    address: 'Borivali West, Mumbai, Maharashtra 400092',
-    latitude: 19.2288,
-    longitude: 72.8541,
-    territory: 'Mumbai Suburban',
-  },
-  {
-    name: 'Thane Railway Station (SATIS)',
-    address: 'Thane West, Thane, Maharashtra 400601',
-    latitude: 19.1869,
-    longitude: 72.9755,
-    territory: 'Thane district',
-  },
-  {
-    name: 'Viviana Mall, Thane',
-    address: 'Eastern Express Highway, Thane West, Maharashtra 400606',
-    latitude: 19.2091,
-    longitude: 72.9714,
-    territory: 'Thane district',
-  },
-  {
-    name: 'Mira Road Station',
-    address: 'Mira Road East, Mira Bhayandar, Maharashtra 401107',
-    latitude: 19.2812,
-    longitude: 72.8560,
-    territory: 'Thane district',
-  },
-  {
-    name: 'Vashi Plaza / Bus Station',
-    address: 'Sector 17, Vashi, Navi Mumbai, Maharashtra 400703',
-    latitude: 19.0768,
-    longitude: 72.9982,
-    territory: 'Navi Mumbai',
-  },
-  {
-    name: 'CBD Belapur Station Complex',
-    address: 'Sector 11, CBD Belapur, Navi Mumbai, Maharashtra 400614',
-    latitude: 19.0185,
-    longitude: 73.0401,
-    territory: 'Navi Mumbai',
-  },
-  {
-    name: 'Kharghar Central Park',
-    address: 'Sector 23, Kharghar, Navi Mumbai, Maharashtra 410210',
-    latitude: 19.0436,
-    longitude: 73.0682,
-    territory: 'Navi Mumbai',
-  },
-  {
-    name: 'Kalyan Junction Railway Station',
-    address: 'Kalyan West, Kalyan-Dombivli, Maharashtra 421301',
-    latitude: 19.2364,
-    longitude: 73.1306,
-    territory: 'Kalyan-Dombivli',
-  },
-  {
-    name: 'Dombivli Railway Station',
-    address: 'Dombivli East, Kalyan-Dombivli, Maharashtra 421201',
-    latitude: 19.2184,
-    longitude: 73.0867,
-    territory: 'Kalyan-Dombivli',
-  },
-  {
-    name: 'Vasai Road Railway Station',
-    address: 'Vasai West, Palghar District, Maharashtra 401202',
-    latitude: 19.3822,
-    longitude: 72.8322,
-    territory: 'Palghar district',
-  },
-  {
-    name: 'Virar Railway Station',
-    address: 'Virar West, Palghar District, Maharashtra 401303',
-    latitude: 19.4554,
-    longitude: 72.8105,
-    territory: 'Palghar district',
-  },
-  {
-    name: 'Palghar Railway Station',
-    address: 'Palghar West, Palghar District, Maharashtra 401404',
-    latitude: 19.6967,
-    longitude: 72.7656,
-    territory: 'Palghar district',
-  },
-];
-
-/**
- * Validates whether a territory string is one of the 6 approved service zones
- */
-export function isValidServiceZone(zone) {
-  if (!zone || typeof zone !== 'string') return false;
-  const normalized = zone.trim().toLowerCase();
-  return ALLOWED_SERVICE_ZONES.some(
-    (allowed) => allowed.toLowerCase() === normalized
-  );
-}
-
-/**
- * Determines and validates the service territory from coordinates and place details.
- * Returns one of the 6 canonical territory names, or null if outside GoRide coverage.
- */
-export function detectServiceTerritory(lat, lon, details = {}) {
-  const numericLat = Number(lat);
-  const numericLon = Number(lon);
-
-  if (isNaN(numericLat) || isNaN(numericLon)) {
-    return null;
-  }
-
-  // 1. Strict MMR boundary check
-  if (
-    numericLat < MMR_BOUNDS.minLat ||
-    numericLat > MMR_BOUNDS.maxLat ||
-    numericLon < MMR_BOUNDS.minLon ||
-    numericLon > MMR_BOUNDS.maxLon
-  ) {
-    return null; // Outside GoRide operational territory
-  }
-
-  // Check if explicit validated territory is already provided in details
-  if (details.territory && isValidServiceZone(details.territory)) {
-    return details.territory;
-  }
-
-  // 2. Textual context matching from address/geocoder metadata
-  const textContext = [
-    details.name,
-    details.street,
+function getLocationArea(details = {}) {
+  const area = [
+    details.territory,
     details.locality,
     details.district,
     details.city,
     details.county,
-    details.suburb,
-    details.state_district,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+    details.state,
+    details.country,
+    details.name,
+  ].find((value) => typeof value === 'string' && value.trim());
 
-  if (
-    textContext.includes('kalyan') ||
-    textContext.includes('dombivli') ||
-    textContext.includes('thakurli') ||
-    textContext.includes('titwala') ||
-    textContext.includes('kdmc')
-  ) {
-    return 'Kalyan-Dombivli';
+  return area ? area.trim().slice(0, 50) : '';
+}
+
+function isValidCoordinatePair(latitude, longitude) {
+  return (
+    typeof latitude === 'number' &&
+    Number.isFinite(latitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    typeof longitude === 'number' &&
+    Number.isFinite(longitude) &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
+}
+
+function parseCoordinate(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim()) return Number(value);
+  return NaN;
+}
+
+async function requestGeocodingFeatures(query, limit) {
+  const geocodingBase =
+    process.env.GEOCODING_API_URL?.trim() || 'https://photon.komoot.io/api';
+  const endpoint = `${geocodingBase.replace(/\/$/, '')}/?q=${encodeURIComponent(query)}&limit=${limit}`;
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      headers: { 'User-Agent': 'GoRide/1.0' },
+      signal: AbortSignal.timeout(6000),
+    });
+  } catch (err) {
+    throw {
+      statusCode: 502,
+      code: 'GEOCODING_SERVICE_UNAVAILABLE',
+      message: `Location search service connection failed: ${err.message}`,
+    };
   }
 
-  if (
-    textContext.includes('mira bhayandar') ||
-    textContext.includes('mira road') ||
-    textContext.includes('bhayandar') ||
-    textContext.includes('bhiwandi') ||
-    textContext.includes('ulhasnagar') ||
-    textContext.includes('ambernath') ||
-    textContext.includes('badlapur') ||
-    textContext.includes('thane')
-  ) {
-    return 'Thane district';
+  if (!response.ok) {
+    throw {
+      statusCode: 502,
+      code: 'GEOCODING_SERVICE_ERROR',
+      message: `Location search provider returned HTTP status ${response.status}.`,
+    };
   }
 
-  if (
-    textContext.includes('navi mumbai') ||
-    textContext.includes('vashi') ||
-    textContext.includes('nerul') ||
-    textContext.includes('belapur') ||
-    textContext.includes('kharghar') ||
-    textContext.includes('panvel') ||
-    textContext.includes('airoli') ||
-    textContext.includes('ghansoli') ||
-    textContext.includes('kopar khairane') ||
-    textContext.includes('seawoods') ||
-    textContext.includes('ulwe') ||
-    textContext.includes('dronagiri')
-  ) {
-    return 'Navi Mumbai';
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw {
+      statusCode: 502,
+      code: 'INVALID_GEOCODING_RESPONSE',
+      message: 'Location search provider returned an invalid response.',
+    };
   }
 
-  if (
-    textContext.includes('vasai') ||
-    textContext.includes('virar') ||
-    textContext.includes('nalasopara') ||
-    textContext.includes('naigaon') ||
-    textContext.includes('palghar') ||
-    textContext.includes('boisar') ||
-    textContext.includes('dahanu') ||
-    textContext.includes('wada') ||
-    textContext.includes('jawhar')
-  ) {
-    return 'Palghar district';
+  if (!Array.isArray(data.features)) {
+    throw {
+      statusCode: 502,
+      code: 'INVALID_GEOCODING_RESPONSE',
+      message: 'Location search provider returned an invalid response.',
+    };
   }
 
-  if (
-    textContext.includes('mumbai city') ||
-    textContext.includes('colaba') ||
-    textContext.includes('fort') ||
-    textContext.includes('nariman point') ||
-    textContext.includes('marine drive') ||
-    textContext.includes('cst') ||
-    textContext.includes('churchgate') ||
-    textContext.includes('byculla') ||
-    textContext.includes('dadar') ||
-    textContext.includes('worli') ||
-    textContext.includes('parel') ||
-    textContext.includes('lower parel') ||
-    textContext.includes('mahim') ||
-    textContext.includes('sion')
-  ) {
-    return 'Mumbai City';
-  }
-
-  if (
-    textContext.includes('mumbai suburban') ||
-    textContext.includes('bandra') ||
-    textContext.includes('bkc') ||
-    textContext.includes('kurla') ||
-    textContext.includes('andheri') ||
-    textContext.includes('juhu') ||
-    textContext.includes('santacruz') ||
-    textContext.includes('vile parle') ||
-    textContext.includes('powai') ||
-    textContext.includes('ghatkopar') ||
-    textContext.includes('vikhroli') ||
-    textContext.includes('bhandup') ||
-    textContext.includes('mulund') ||
-    textContext.includes('chembur') ||
-    textContext.includes('trombay') ||
-    textContext.includes('goregaon') ||
-    textContext.includes('malad') ||
-    textContext.includes('kandivali') ||
-    textContext.includes('borivali') ||
-    textContext.includes('dahisar')
-  ) {
-    return 'Mumbai Suburban';
-  }
-
-  // 3. Geographic bounding heuristics inside Mumbai MMR
-  // Mumbai City (Island City: South of Mahim/Sion)
-  if (numericLat < 19.04 && numericLon >= 72.78 && numericLon <= 72.89) {
-    return 'Mumbai City';
-  }
-
-  // Mumbai Suburban (North of Mahim/Sion up to Dahisar/Mulund)
-  if (numericLat >= 19.04 && numericLat <= 19.27 && numericLon >= 72.78 && numericLon <= 72.96) {
-    return 'Mumbai Suburban';
-  }
-
-  // Thane district (Thane city, Majiwada, Ghodbunder, Kalwa, Mumbra)
-  if (numericLat >= 19.16 && numericLat <= 19.35 && numericLon >= 72.92 && numericLon <= 73.05) {
-    return 'Thane district';
-  }
-  // Mira-Bhayandar (western belt of Thane district)
-  if (numericLat >= 19.26 && numericLat <= 19.34 && numericLon >= 72.82 && numericLon <= 72.91) {
-    return 'Thane district';
-  }
-
-  // Navi Mumbai (Airoli down to CBD Belapur, Kharghar, Panvel)
-  if (numericLon >= 72.97 && numericLon <= 73.18 && numericLat >= 18.88 && numericLat < 19.16) {
-    return 'Navi Mumbai';
-  }
-
-  // Kalyan-Dombivli (Central railway belt east of Thane)
-  if (numericLon >= 73.06 && numericLon <= 73.25 && numericLat >= 19.18 && numericLat <= 19.32) {
-    return 'Kalyan-Dombivli';
-  }
-
-  // Palghar district (Vasai-Virar belt & northern district)
-  if ((numericLat >= 19.32 && numericLon >= 72.70 && numericLon <= 73.20) || (numericLon < 72.90 && numericLat >= 19.32)) {
-    return 'Palghar district';
-  }
-
-  // Fallback within valid MMR coordinate boundary defaults to Thane district
-  return 'Thane district';
+  return data.features;
 }
 
 /**
@@ -391,12 +115,15 @@ export async function calculateRoadRoute({
     };
   }
 
-  const pLat = Number(pickupLat);
-  const pLng = Number(pickupLng);
-  const dLat = Number(destLat);
-  const dLng = Number(destLng);
+  const pLat = parseCoordinate(pickupLat);
+  const pLng = parseCoordinate(pickupLng);
+  const dLat = parseCoordinate(destLat);
+  const dLng = parseCoordinate(destLng);
 
-  if (isNaN(pLat) || isNaN(pLng) || isNaN(dLat) || isNaN(dLng)) {
+  if (
+    !isValidCoordinatePair(pLat, pLng) ||
+    !isValidCoordinatePair(dLat, dLng)
+  ) {
     throw {
       statusCode: 400,
       code: 'INVALID_COORDINATES',
@@ -404,25 +131,8 @@ export async function calculateRoadRoute({
     };
   }
 
-  // Validate that both coordinates are inside GoRide's approved service territories
-  const pickupTerritory = detectServiceTerritory(pLat, pLng, pickupDetails);
-  const destTerritory = detectServiceTerritory(dLat, dLng, destDetails);
-
-  if (!pickupTerritory) {
-    throw {
-      statusCode: 400,
-      code: 'OUT_OF_SERVICE_AREA',
-      message: `Pickup coordinates (${pLat.toFixed(4)}, ${pLng.toFixed(4)}) are outside GoRide's supported service area (${ALLOWED_SERVICE_ZONES.join(', ')}).`,
-    };
-  }
-
-  if (!destTerritory) {
-    throw {
-      statusCode: 400,
-      code: 'OUT_OF_SERVICE_AREA',
-      message: `Destination coordinates (${dLat.toFixed(4)}, ${dLng.toFixed(4)}) are outside GoRide's supported service area (${ALLOWED_SERVICE_ZONES.join(', ')}).`,
-    };
-  }
+  const pickupTerritory = getLocationArea(pickupDetails) || 'Unknown area';
+  const destTerritory = getLocationArea(destDetails) || 'Unknown area';
 
   // Call Road Routing API (OSRM)
   const routeOptions = includeGeometry
@@ -455,7 +165,16 @@ export async function calculateRoadRoute({
     };
   }
 
-  const routeData = await response.json();
+  let routeData;
+  try {
+    routeData = await response.json();
+  } catch {
+    throw {
+      statusCode: 502,
+      code: 'INVALID_ROUTING_RESPONSE',
+      message: 'Routing provider returned an invalid response.',
+    };
+  }
   if (routeData.code !== 'Ok' || !routeData.routes || routeData.routes.length === 0) {
     throw {
       statusCode: 404,
@@ -465,6 +184,18 @@ export async function calculateRoadRoute({
   }
 
   const primary = routeData.routes[0];
+  if (
+    !Number.isFinite(primary.distance) ||
+    primary.distance < 0 ||
+    !Number.isFinite(primary.duration) ||
+    primary.duration < 0
+  ) {
+    throw {
+      statusCode: 502,
+      code: 'INVALID_ROUTING_RESPONSE',
+      message: 'Routing provider returned invalid route distance or duration data.',
+    };
+  }
   const distanceKm = parseFloat((primary.distance / 1000).toFixed(2));
   const estimatedDurationMin = Math.max(1, Math.round(primary.duration / 60));
   const geometry = primary.geometry;
@@ -535,150 +266,108 @@ export function calculateFareFromDistance(distanceKm, vehicleTier = 'STANDARD') 
 }
 
 /**
- * Search places and landmarks across Mumbai MMR with location autocomplete.
- * Merges high-frequency preset hubs with live OpenStreetMap/Photon geocoding.
+ * Search for locations globally using the configured Photon-compatible service.
  */
 export async function searchPlaces(query) {
   if (!query || typeof query !== 'string' || query.trim().length < 2) {
     return [];
   }
 
-  const cleanQuery = query.trim().toLowerCase();
+  const features = await requestGeocodingFeatures(query.trim(), 10);
+  const seenPlaces = new Set();
   const results = [];
-  const seenNames = new Set();
 
-  // 1. Fast match against curated MMR landmark presets
-  for (const preset of MMR_LANDMARK_PRESETS) {
+  for (const feature of features) {
+    const properties = feature?.properties || {};
+    const coordinates = feature?.geometry?.coordinates;
     if (
-      preset.name.toLowerCase().includes(cleanQuery) ||
-      preset.address.toLowerCase().includes(cleanQuery) ||
-      preset.territory.toLowerCase().includes(cleanQuery)
+      !Array.isArray(coordinates) ||
+      coordinates.length < 2 ||
+      !isValidCoordinatePair(coordinates[1], coordinates[0])
     ) {
-      results.push({
-        placeId: `preset-${preset.name.replace(/\s+/g, '-').toLowerCase()}`,
-        name: preset.name,
-        address: preset.address,
-        latitude: preset.latitude,
-        longitude: preset.longitude,
-        territory: preset.territory,
-      });
-      seenNames.add(preset.name.toLowerCase());
+      continue;
     }
-  }
 
-  // 2. Query live Photon geocoder (bounded to Mumbai MMR)
-  const geocodingBase = process.env.GEOCODING_API_URL?.trim() || 'https://photon.komoot.io/api';
-  try {
-    const photonUrl = `${geocodingBase.replace(/\/$/, '')}/?q=${encodeURIComponent(query.trim())}&limit=8&bbox=72.6,18.7,73.4,20.3`;
-    const res = await fetch(photonUrl, {
-      headers: { 'User-Agent': 'GoRide/1.0' },
-      signal: AbortSignal.timeout(6000),
+    const [longitude, latitude] = coordinates;
+    const name =
+      properties.name ||
+      properties.street ||
+      properties.locality ||
+      properties.city ||
+      query.trim();
+    const addressParts = [
+      properties.name,
+      properties.street,
+      properties.locality,
+      properties.district,
+      properties.city,
+      properties.state,
+      properties.country,
+      properties.postcode,
+    ].filter((part) => typeof part === 'string' && part.trim());
+    const address = [...new Set(addressParts)].join(', ') || name;
+    const placeId = properties.osm_id
+      ? `osm-${properties.osm_type || 'place'}-${properties.osm_id}`
+      : `location-${latitude}-${longitude}-${name}`;
+
+    if (seenPlaces.has(placeId)) continue;
+    seenPlaces.add(placeId);
+    results.push({
+      placeId,
+      name,
+      address,
+      latitude,
+      longitude,
+      territory: getLocationArea(properties),
     });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.features)) {
-        for (const f of data.features) {
-          const props = f.properties || {};
-          const coords = f.geometry?.coordinates;
-          if (!coords || coords.length < 2) continue;
-
-          const lon = coords[0];
-          const lat = coords[1];
-          const territory = detectServiceTerritory(lat, lon, props);
-
-          // Only include results that resolve to a valid GoRide service territory
-          if (!territory) continue;
-
-          const placeName = props.name || props.street || props.locality || query;
-          const addressParts = [
-            props.name,
-            props.street,
-            props.locality,
-            props.district,
-            props.city || territory,
-            props.postcode,
-          ].filter(Boolean);
-
-          const fullAddress = Array.from(new Set(addressParts)).join(', ');
-          const lowerName = placeName.toLowerCase();
-
-          if (!seenNames.has(lowerName)) {
-            seenNames.add(lowerName);
-            results.push({
-              placeId: `osm-${props.osm_type || 'p'}-${props.osm_id || Math.random()}`,
-              name: placeName,
-              address: fullAddress || `${placeName}, ${territory}`,
-              latitude: lat,
-              longitude: lon,
-              territory,
-            });
-          }
-        }
-      }
-    }
-  } catch (geoErr) {
-    // If external geocoder is unreachable, presets still provide instant fallback
   }
 
-  return results.slice(0, 10);
+  return results;
 }
 
 /**
- * Geocode a freeform address string into geographic coordinates and territory
+ * Geocode a freeform address using the configured Photon-compatible service.
  */
 export async function geocodeAddress(addressString) {
-  if (!addressString || typeof addressString !== 'string') return null;
-
-  // Check presets first
-  const clean = addressString.trim().toLowerCase();
-  const matchedPreset = MMR_LANDMARK_PRESETS.find(
-    (p) =>
-      clean.includes(p.name.toLowerCase()) ||
-      clean.includes(p.address.toLowerCase()) ||
-      p.name.toLowerCase().includes(clean)
-  );
-
-  if (matchedPreset) {
-    return {
-      address: matchedPreset.address,
-      latitude: matchedPreset.latitude,
-      longitude: matchedPreset.longitude,
-      territory: matchedPreset.territory,
-    };
+  if (!addressString || typeof addressString !== 'string' || !addressString.trim()) {
+    return null;
   }
 
-  // Query live geocoding service
-  const geocodingBase = process.env.GEOCODING_API_URL?.trim() || 'https://photon.komoot.io/api';
-  try {
-    const photonUrl = `${geocodingBase.replace(/\/$/, '')}/?q=${encodeURIComponent(addressString)}&limit=1&bbox=72.6,18.7,73.4,20.3`;
-    const res = await fetch(photonUrl, {
-      headers: { 'User-Agent': 'GoRide/1.0' },
-      signal: AbortSignal.timeout(6000),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const f = data.features?.[0];
-      if (f && f.geometry?.coordinates) {
-        const lon = f.geometry.coordinates[0];
-        const lat = f.geometry.coordinates[1];
-        const territory = detectServiceTerritory(lat, lon, f.properties || {});
-        if (territory) {
-          return {
-            address: addressString,
-            latitude: lat,
-            longitude: lon,
-            territory,
-          };
-        }
-      }
-    }
-  } catch (err) {
-    // Geocoding request failed
+  const [feature] = await requestGeocodingFeatures(addressString.trim(), 1);
+  const coordinates = feature?.geometry?.coordinates;
+  if (
+    !Array.isArray(coordinates) ||
+    coordinates.length < 2 ||
+    !isValidCoordinatePair(coordinates[1], coordinates[0])
+  ) {
+    return null;
   }
 
-  return null;
+  const properties = feature.properties || {};
+  const name =
+    properties.name ||
+    properties.street ||
+    properties.locality ||
+    properties.city ||
+    addressString.trim();
+  const addressParts = [
+    properties.name,
+    properties.street,
+    properties.locality,
+    properties.district,
+    properties.city,
+    properties.state,
+    properties.country,
+    properties.postcode,
+  ].filter((part) => typeof part === 'string' && part.trim());
+
+  return {
+    name,
+    address: [...new Set(addressParts)].join(', ') || addressString.trim(),
+    latitude: coordinates[1],
+    longitude: coordinates[0],
+    territory: getLocationArea(properties),
+  };
 }
 
 /**
@@ -689,9 +378,11 @@ export async function estimateFare({
   pickupAddress,
   pickupLat,
   pickupLng,
+  pickupTerritory,
   destAddress,
   destLat,
   destLng,
+  destTerritory,
   vehicleTier,
   vehicleCategory,
 }) {
@@ -704,10 +395,10 @@ export async function estimateFare({
     };
   }
 
-  let pLat = Number(pickupLat);
-  let pLng = Number(pickupLng);
-  let dLat = Number(destLat);
-  let dLng = Number(destLng);
+  let pLat = parseCoordinate(pickupLat);
+  let pLng = parseCoordinate(pickupLng);
+  let dLat = parseCoordinate(destLat);
+  let dLng = parseCoordinate(destLng);
 
   // If coordinates are missing, resolve from address text
   if (isNaN(pLat) || isNaN(pLng)) {
@@ -716,7 +407,7 @@ export async function estimateFare({
       throw {
         statusCode: 400,
         code: 'INVALID_PICKUP',
-        message: `Could not resolve pickup location '${pickupAddress}'. Please select a specific address or landmark in Mumbai MMR.`,
+        message: `Could not resolve pickup location '${pickupAddress}'. Select a place returned by location search or try a more specific address.`,
       };
     }
     pLat = resolvedPickup.latitude;
@@ -729,7 +420,7 @@ export async function estimateFare({
       throw {
         statusCode: 400,
         code: 'INVALID_DESTINATION',
-        message: `Could not resolve destination location '${destAddress}'. Please select a specific address or landmark in Mumbai MMR.`,
+        message: `Could not resolve destination location '${destAddress}'. Select a place returned by location search or try a more specific address.`,
       };
     }
     dLat = resolvedDest.latitude;
@@ -742,8 +433,9 @@ export async function estimateFare({
     pickupLng: pLng,
     destLat: dLat,
     destLng: dLng,
-    pickupDetails: { name: pickupAddress },
-    destDetails: { name: destAddress },
+    pickupDetails: { name: pickupAddress, territory: pickupTerritory },
+    destDetails: { name: destAddress, territory: destTerritory },
+    includeGeometry: true,
   });
 
   // Calculate tier fare from actual distance
@@ -760,6 +452,7 @@ export async function estimateFare({
     vehicleCategory: fare.vehicleCategory,
     distanceKm: route.distanceKm,
     estimatedDurationMin: route.estimatedDurationMin,
+    ...(route.routeGeometry ? { routeGeometry: route.routeGeometry } : {}),
     baseFare: fare.baseFare,
     ratePerKm: fare.ratePerKm,
     minFare: fare.minFare,
@@ -776,9 +469,11 @@ export async function createBooking({
   pickupAddress,
   pickupLat,
   pickupLng,
+  pickupTerritory,
   destAddress,
   destLat,
   destLng,
+  destTerritory,
   vehicleTier,
   vehicleCategory,
 }) {
@@ -798,10 +493,10 @@ export async function createBooking({
     };
   }
 
-  let pLat = Number(pickupLat);
-  let pLng = Number(pickupLng);
-  let dLat = Number(destLat);
-  let dLng = Number(destLng);
+  let pLat = parseCoordinate(pickupLat);
+  let pLng = parseCoordinate(pickupLng);
+  let dLat = parseCoordinate(destLat);
+  let dLng = parseCoordinate(destLng);
 
   if (isNaN(pLat) || isNaN(pLng)) {
     const geocoded = await geocodeAddress(pickupAddress.trim());
@@ -835,8 +530,8 @@ export async function createBooking({
     pickupLng: pLng,
     destLat: dLat,
     destLng: dLng,
-    pickupDetails: { name: pickupAddress },
-    destDetails: { name: destAddress },
+    pickupDetails: { name: pickupAddress, territory: pickupTerritory },
+    destDetails: { name: destAddress, territory: destTerritory },
   });
 
   const fareInfo = calculateFareFromDistance(routeInfo.distanceKm, chosenCategory);
